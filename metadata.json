@@ -1,0 +1,11 @@
+{
+  "name": "New Sajjad Zari Corporation",
+  "description": "Production-grade offline-first Retail POS, Inventory & Khata Ledger System for New Sajjad Zari Corporation with Thermal/A4 printing, profit heatmap, and daily closing.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

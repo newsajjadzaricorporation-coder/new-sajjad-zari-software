@@ -1,0 +1,195 @@
+@import "tailwindcss";
+
+@layer base {
+  * {
+    border-color: rgba(255, 255, 255, 0.08);
+  }
+
+  body {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  }
+}
+
+.font-urdu {
+  font-family: 'Noto Nastaliq Urdu', serif;
+}
+
+.font-mono-receipt {
+  font-family: 'JetBrains Mono', 'Courier New', Courier, monospace;
+}
+
+/* Custom Sleek Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.6);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.25);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.4);
+}
+
+/* DAY / LIGHT MODE STYLES */
+html.light-mode,
+body.light-mode,
+.light-mode {
+  background-color: #f8fafc !important;
+  color: #0f172a !important;
+}
+
+.light-mode ::-webkit-scrollbar-track {
+  background: rgba(241, 245, 249, 0.9);
+}
+.light-mode ::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.5);
+}
+
+.light-mode * {
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+.light-mode .bg-slate-900 {
+  background-color: #ffffff !important;
+}
+
+.light-mode .bg-slate-950 {
+  background-color: #f1f5f9 !important;
+}
+
+.light-mode .bg-slate-800 {
+  background-color: #f1f5f9 !important;
+}
+
+.light-mode .bg-slate-950\/85,
+.light-mode .bg-slate-950\/80,
+.light-mode .bg-slate-950\/70,
+.light-mode .bg-slate-950\/60,
+.light-mode .bg-slate-950\/40,
+.light-mode .bg-slate-950\/50 {
+  background-color: rgba(248, 250, 252, 0.92) !important;
+}
+
+.light-mode .bg-slate-900\/80,
+.light-mode .bg-slate-900\/90 {
+  background-color: rgba(255, 255, 255, 0.96) !important;
+}
+
+.light-mode .border-slate-800,
+.light-mode .border-slate-700,
+.light-mode .border-slate-800\/80,
+.light-mode .border-slate-800\/60 {
+  border-color: #e2e8f0 !important;
+}
+
+.light-mode .text-slate-100,
+.light-mode .text-slate-200 {
+  color: #0f172a !important;
+}
+
+.light-mode .text-slate-300 {
+  color: #334155 !important;
+}
+
+.light-mode .text-slate-400 {
+  color: #64748b !important;
+}
+
+.light-mode .text-slate-500 {
+  color: #94a3b8 !important;
+}
+
+.light-mode h1:not(.text-amber-950),
+.light-mode h2:not(.text-amber-950),
+.light-mode h3:not(.text-amber-950),
+.light-mode h4:not(.text-amber-950),
+.light-mode span.text-white:not(.btn-text) {
+  color: #0f172a;
+}
+
+/* Light mode text colors for high readability */
+.light-mode .text-amber-400 {
+  color: #b45309 !important;
+}
+.light-mode .text-amber-300 {
+  color: #92400e !important;
+}
+.light-mode .text-emerald-400 {
+  color: #047857 !important;
+}
+.light-mode .text-blue-400 {
+  color: #1d4ed8 !important;
+}
+.light-mode .text-red-400 {
+  color: #b91c1c !important;
+}
+
+/* Form fields in Day / Light mode */
+.light-mode input:not([type="checkbox"]):not([type="radio"]):not([type="color"]),
+.light-mode select,
+.light-mode textarea {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
+}
+
+.light-mode input::placeholder,
+.light-mode textarea::placeholder {
+  color: #94a3b8 !important;
+}
+
+.light-mode .hover\:bg-slate-800:hover {
+  background-color: #f1f5f9 !important;
+}
+.light-mode .hover\:bg-slate-700:hover {
+  background-color: #e2e8f0 !important;
+}
+.light-mode .hover\:text-white:hover {
+  color: #0f172a !important;
+}
+
+.light-mode .fixed.inset-0.bg-slate-950\/70,
+.light-mode .fixed.inset-0.bg-slate-950\/80,
+.light-mode .fixed.inset-0.bg-black\/60,
+.light-mode .fixed.inset-0.bg-black\/70 {
+  background-color: rgba(15, 23, 42, 0.45) !important;
+}
+
+.light-mode .shadow-2xl,
+.light-mode .shadow-xl {
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.08), 0 8px 10px -6px rgba(0, 0, 0, 0.04) !important;
+}
+
+/* Thermal & Laser Print Media Styles */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+
+  #printable-receipt, #printable-receipt * {
+    visibility: visible;
+  }
+
+  #printable-receipt {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
+
+  @page {
+    margin: 0;
+    size: auto;
+  }
+}

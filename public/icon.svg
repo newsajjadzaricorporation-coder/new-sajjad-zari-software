@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#090d16"/>
+      <stop offset="50%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#1e293b"/>
+    </linearGradient>
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fbbf24"/>
+      <stop offset="50%" stop-color="#d97706"/>
+      <stop offset="100%" stop-color="#b45309"/>
+    </linearGradient>
+    <linearGradient id="emeraldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#34d399"/>
+      <stop offset="100%" stop-color="#059669"/>
+    </linearGradient>
+  </defs>
+  <!-- Background with subtle border -->
+  <rect width="512" height="512" rx="96" fill="url(#bgGrad)"/>
+  <rect x="12" y="12" width="488" height="488" rx="84" fill="none" stroke="url(#goldGrad)" stroke-width="4" stroke-opacity="0.4"/>
+  
+  <!-- Stylized Zari Embroidery Diamond Lattice -->
+  <g transform="translate(256, 230)">
+    <!-- Outer ornate diamond -->
+    <path d="M0 -150 L150 0 L0 150 L-150 0 Z" fill="none" stroke="url(#goldGrad)" stroke-width="8" stroke-linejoin="round"/>
+    <circle cx="0" cy="-150" r="10" fill="#fbbf24"/>
+    <circle cx="150" cy="0" r="10" fill="#fbbf24"/>
+    <circle cx="0" cy="150" r="10" fill="#fbbf24"/>
+    <circle cx="-150" cy="0" r="10" fill="#fbbf24"/>
+    
+    <!-- Inner diamond -->
+    <path d="M0 -100 L100 0 L0 100 L-100 0 Z" fill="#0f172a" stroke="url(#emeraldGrad)" stroke-width="5"/>
+
+    <!-- Z / S Monogram for Sajjad Zari -->
+    <path d="M -50 -55 L 50 -55 L -45 55 L 50 55" fill="none" stroke="url(#goldGrad)" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- Thread spindle accent -->
+    <circle cx="0" cy="0" r="14" fill="#fbbf24"/>
+  </g>
+  
+  <!-- Text banner -->
+  <text x="256" y="420" font-family="'Plus Jakarta Sans', system-ui, sans-serif" font-size="28" font-weight="800" fill="#f8fafc" text-anchor="middle" letter-spacing="4">SAJJAD ZARI</text>
+  <text x="256" y="455" font-family="'Noto Nastaliq Urdu', serif" font-size="22" font-weight="700" fill="#fbbf24" text-anchor="middle">نیو سجاد زری کارپوریشن</text>
+</svg>

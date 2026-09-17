@@ -1,0 +1,175 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && (request.auth.token.email_verified == true || request.auth.token.firebase.sign_in_provider == 'google.com' || request.auth.token.firebase.sign_in_provider == 'anonymous');
+    }
+
+    function isBootstrappedAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'newsajjadzaricorporation@gmail.com' ||
+        request.auth.token.email == 'admin@newsajjadzari.com'
+      );
+    }
+
+    function isAdmin() {
+      return isBootstrappedAdmin() || (
+        isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
+      );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-\\.]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Product Entity Validation
+    function isValidProduct(data) {
+      return data.id is string && data.id.size() > 0 && data.id.size() <= 128 &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 200 &&
+             data.category is string && data.category.size() <= 100 &&
+             data.unit is string && data.unit.size() <= 50 &&
+             data.costPrice is number && data.costPrice >= 0 &&
+             data.sellingPrice is number && data.sellingPrice >= 0 &&
+             data.stock is number;
+    }
+
+    // Sale Invoice Entity Validation
+    function isValidSale(data) {
+      return data.id is string && data.id.size() > 0 && data.id.size() <= 128 &&
+             data.invoiceNo is string && data.invoiceNo.size() > 0 && data.invoiceNo.size() <= 50 &&
+             data.date is string && data.date.size() <= 50 &&
+             data.subtotal is number && data.subtotal >= 0 &&
+             data.netTotal is number && data.netTotal >= 0 &&
+             data.paymentMethod is string && data.paymentMethod.size() <= 50;
+    }
+
+    // Customer Entity Validation
+    function isValidCustomer(data) {
+      return data.id is string && data.id.size() > 0 && data.id.size() <= 128 &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 150 &&
+             data.balance is number;
+    }
+
+    // Supplier Entity Validation
+    function isValidSupplier(data) {
+      return data.id is string && data.id.size() > 0 && data.id.size() <= 128 &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 150 &&
+             data.balance is number;
+    }
+
+    // Expense Entity Validation
+    function isValidExpense(data) {
+      return data.id is string && data.id.size() > 0 && data.id.size() <= 128 &&
+             data.date is string && data.date.size() <= 50 &&
+             data.title is string && data.title.size() > 0 && data.title.size() <= 200 &&
+             data.category is string && data.category.size() <= 100 &&
+             data.amount is number && data.amount >= 0;
+    }
+
+    // Daily Closing Entity Validation
+    function isValidDailyClosing(data) {
+      return data.id is string && data.id.size() > 0 && data.id.size() <= 128 &&
+             data.date is string && data.date.size() <= 50 &&
+             data.expectedCash is number &&
+             data.actualCash is number &&
+             data.closedBy is string && data.closedBy.size() <= 100;
+    }
+
+    // Shop Settings Entity Validation
+    function isValidShopSettings(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.shopName is string && data.shopName.size() > 0 && data.shopName.size() <= 150 &&
+             data.phone is string && data.phone.size() <= 50 &&
+             data.address is string && data.address.size() <= 300;
+    }
+
+    // Products Collection
+    match /products/{productId} {
+      allow get, list: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(productId) && isValidProduct(incoming());
+      allow update: if isSignedIn() && isValidId(productId) && isValidProduct(incoming());
+      allow delete: if isAdmin();
+    }
+
+    // Sales Collection
+    match /sales/{saleId} {
+      allow get, list: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(saleId) && isValidSale(incoming());
+      allow update: if isAdmin() && isValidId(saleId) && isValidSale(incoming());
+      allow delete: if isAdmin();
+    }
+
+    // Customers Collection
+    match /customers/{customerId} {
+      allow get, list: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(customerId) && isValidCustomer(incoming());
+      allow update: if isSignedIn() && isValidId(customerId) && isValidCustomer(incoming());
+      allow delete: if isAdmin();
+    }
+
+    // Suppliers Collection
+    match /suppliers/{supplierId} {
+      allow get, list: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(supplierId) && isValidSupplier(incoming());
+      allow update: if isSignedIn() && isValidId(supplierId) && isValidSupplier(incoming());
+      allow delete: if isAdmin();
+    }
+
+    // Expenses Collection
+    match /expenses/{expenseId} {
+      allow get, list: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(expenseId) && isValidExpense(incoming());
+      allow update: if isSignedIn() && isValidId(expenseId) && isValidExpense(incoming());
+      allow delete: if isAdmin();
+    }
+
+    // Daily Closings Collection
+    match /dailyClosings/{closingId} {
+      allow get, list: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(closingId) && isValidDailyClosing(incoming());
+      allow update: if isAdmin() && isValidId(closingId) && isValidDailyClosing(incoming());
+      allow delete: if isAdmin();
+    }
+
+    // Settings Collection
+    match /settings/{settingId} {
+      allow get, list: if isSignedIn();
+      allow create, update: if isAdmin() && isValidId(settingId) && isValidShopSettings(incoming());
+      allow delete: if isAdmin();
+    }
+
+    // Users Collection
+    match /users/{userId} {
+      allow get, list: if isSignedIn();
+      allow create: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow update: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    // Connection test document
+    match /test/connection {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+  }
+}

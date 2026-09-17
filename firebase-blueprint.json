@@ -1,0 +1,183 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "Retail fabric, zari, lace, or accessories product in inventory",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique product SKU or auto ID" },
+        "name": { "type": "string", "description": "Item name", "maxLength": 200 },
+        "urduName": { "type": "string", "description": "Urdu name", "maxLength": 200 },
+        "barcode": { "type": "string", "description": "Barcode number", "maxLength": 100 },
+        "category": { "type": "string", "description": "Category name", "maxLength": 100 },
+        "unit": { "type": "string", "description": "Measurement unit (Meters, Yards, Rolls, Pieces, etc.)" },
+        "costPrice": { "type": "number", "description": "Purchase cost price in PKR" },
+        "sellingPrice": { "type": "number", "description": "Retail selling price in PKR" },
+        "stock": { "type": "number", "description": "Current quantity in inventory" },
+        "minStockAlert": { "type": "number", "description": "Minimum stock warning threshold" },
+        "createdAt": { "type": "string", "description": "ISO timestamp" },
+        "updatedAt": { "type": "string", "description": "ISO timestamp" }
+      },
+      "required": ["id", "name", "category", "unit", "costPrice", "sellingPrice", "stock"]
+    },
+    "SaleInvoice": {
+      "title": "SaleInvoice",
+      "description": "Completed or credit sale invoice",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique invoice ID" },
+        "invoiceNo": { "type": "string", "description": "Invoice number", "maxLength": 50 },
+        "date": { "type": "string", "description": "Sale date string" },
+        "timestamp": { "type": "string", "description": "Timestamp string" },
+        "customerId": { "type": "string", "description": "Associated customer ID" },
+        "customerName": { "type": "string", "description": "Customer name", "maxLength": 150 },
+        "cashierId": { "type": "string", "description": "Cashier user ID" },
+        "cashierName": { "type": "string", "description": "Cashier name", "maxLength": 100 },
+        "subtotal": { "type": "number", "description": "Items subtotal before discount" },
+        "discount": { "type": "number", "description": "Discount applied" },
+        "tax": { "type": "number", "description": "Sales tax applied" },
+        "netTotal": { "type": "number", "description": "Final bill amount" },
+        "amountPaid": { "type": "number", "description": "Amount paid at checkout" },
+        "changeDue": { "type": "number", "description": "Change returned to customer" },
+        "paymentMethod": { "type": "string", "description": "Payment method (cash, credit, bank, card)" },
+        "paymentStatus": { "type": "string", "description": "paid, partial, unpaid" },
+        "notes": { "type": "string", "description": "Optional notes", "maxLength": 500 }
+      },
+      "required": ["id", "invoiceNo", "date", "subtotal", "netTotal", "paymentMethod"]
+    },
+    "Customer": {
+      "title": "Customer",
+      "description": "Customer profile with Khata credit ledger tracking",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Customer ID" },
+        "name": { "type": "string", "description": "Full name", "maxLength": 150 },
+        "phone": { "type": "string", "description": "Contact number", "maxLength": 30 },
+        "address": { "type": "string", "description": "Delivery or shop address", "maxLength": 300 },
+        "city": { "type": "string", "description": "City name", "maxLength": 100 },
+        "balance": { "type": "number", "description": "Current outstanding balance (Udhaar)" },
+        "creditLimit": { "type": "number", "description": "Approved credit limit" },
+        "createdAt": { "type": "string", "description": "ISO timestamp" }
+      },
+      "required": ["id", "name", "balance"]
+    },
+    "Supplier": {
+      "title": "Supplier",
+      "description": "Wholesale vendor or factory supplier for Zari, Fabrics, and Trims",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Supplier ID" },
+        "name": { "type": "string", "description": "Company or vendor name", "maxLength": 150 },
+        "contactPerson": { "type": "string", "description": "Contact person name", "maxLength": 100 },
+        "phone": { "type": "string", "description": "Phone number", "maxLength": 30 },
+        "address": { "type": "string", "description": "Supplier factory / market address", "maxLength": 300 },
+        "balance": { "type": "number", "description": "Current payable balance to supplier" },
+        "createdAt": { "type": "string", "description": "ISO timestamp" }
+      },
+      "required": ["id", "name", "balance"]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "Daily operational expense entry",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Expense ID" },
+        "date": { "type": "string", "description": "Date string" },
+        "title": { "type": "string", "description": "Description of expense", "maxLength": 200 },
+        "category": { "type": "string", "description": "Category (Tea, Utilities, Rent, Transport, etc.)", "maxLength": 100 },
+        "amount": { "type": "number", "description": "Amount spent in PKR" },
+        "recordedBy": { "type": "string", "description": "Staff name who logged expense", "maxLength": 100 }
+      },
+      "required": ["id", "date", "title", "category", "amount"]
+    },
+    "DailyClosing": {
+      "title": "DailyClosing",
+      "description": "End of day register balance and cash tally record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Closing record ID" },
+        "date": { "type": "string", "description": "Date string" },
+        "openingCash": { "type": "number", "description": "Opening drawer cash" },
+        "cashSales": { "type": "number", "description": "Cash sales total" },
+        "creditSales": { "type": "number", "description": "Udhaar sales total" },
+        "cardSales": { "type": "number", "description": "Digital / Bank sales total" },
+        "recoveries": { "type": "number", "description": "Customer cash khata payments collected" },
+        "supplierPayments": { "type": "number", "description": "Payments made to suppliers" },
+        "expensesTotal": { "type": "number", "description": "Total expenses deducted" },
+        "expectedCash": { "type": "number", "description": "Calculated drawer cash" },
+        "actualCash": { "type": "number", "description": "Physically counted cash" },
+        "difference": { "type": "number", "description": "Discrepancy (shortage or excess)" },
+        "closedBy": { "type": "string", "description": "Staff or Admin name", "maxLength": 100 },
+        "notes": { "type": "string", "description": "Closing remarks", "maxLength": 500 }
+      },
+      "required": ["id", "date", "expectedCash", "actualCash", "closedBy"]
+    },
+    "ShopSettings": {
+      "title": "ShopSettings",
+      "description": "Global shop profile and receipt header configurations",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Settings ID (usually 'global')" },
+        "shopName": { "type": "string", "description": "English business title", "maxLength": 150 },
+        "urduShopName": { "type": "string", "description": "Urdu calligraphy title", "maxLength": 150 },
+        "tagline": { "type": "string", "description": "Business tagline", "maxLength": 200 },
+        "phone": { "type": "string", "description": "Primary contact number", "maxLength": 50 },
+        "secondaryPhone": { "type": "string", "description": "Secondary contact number", "maxLength": 50 },
+        "address": { "type": "string", "description": "Physical shop location", "maxLength": 300 },
+        "taxNumber": { "type": "string", "description": "NTN / STRN tax registration number", "maxLength": 50 },
+        "footerNote": { "type": "string", "description": "Receipt policy notes", "maxLength": 400 },
+        "currency": { "type": "string", "description": "Currency code (PKR / Rs)", "maxLength": 10 },
+        "taxRate": { "type": "number", "description": "Default sales tax percentage" }
+      },
+      "required": ["id", "shopName", "phone", "address"]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User account for role-based terminal access",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "User ID or UID" },
+        "username": { "type": "string", "description": "Login username", "maxLength": 50 },
+        "name": { "type": "string", "description": "Display name", "maxLength": 100 },
+        "role": { "type": "string", "description": "admin, manager, or cashier", "enum": ["admin", "manager", "cashier"] },
+        "email": { "type": "string", "description": "Email address", "maxLength": 150 },
+        "pinCode": { "type": "string", "description": "Terminal PIN code", "maxLength": 20 }
+      },
+      "required": ["id", "username", "name", "role"]
+    }
+  },
+  "firestore": {
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Store inventory products catalog"
+    },
+    "/sales/{saleId}": {
+      "schema": "SaleInvoice",
+      "description": "Completed sales transactions and invoices"
+    },
+    "/customers/{customerId}": {
+      "schema": "Customer",
+      "description": "Customer profiles and Khata account balances"
+    },
+    "/suppliers/{supplierId}": {
+      "schema": "Supplier",
+      "description": "Supplier profiles and Khata payable balances"
+    },
+    "/expenses/{expenseId}": {
+      "schema": "Expense",
+      "description": "Operational expense vouchers"
+    },
+    "/dailyClosings/{closingId}": {
+      "schema": "DailyClosing",
+      "description": "Day-end cash registers and reconciliations"
+    },
+    "/settings/{settingId}": {
+      "schema": "ShopSettings",
+      "description": "Enterprise shop settings and configurations"
+    },
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Authorized staff and admin credentials"
+    }
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "id": "/",
+  "name": "New Sajjad Zari Corporation",
+  "short_name": "Sajjad Zari",
+  "description": "Offline-first Retail POS, Inventory, Khata Ledger & Thermal Printing System",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
