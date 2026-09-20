@@ -1233,7 +1233,17 @@ export class OfflineDB {
 
   // USERS & ROLES
   static getUsers(): UserProfile[] {
-    return getLocalItem<UserProfile[]>(DB_KEYS.USERS, [INITIAL_USER]);
+    const rawUsers = getLocalItem<UserProfile[]>(DB_KEYS.USERS, [INITIAL_USER]);
+    const uniqueMap = new Map<string, UserProfile>();
+    
+    rawUsers.forEach((u) => {
+      const key = u.uid || u.email || 'user-unknown';
+      if (!uniqueMap.has(key)) {
+        uniqueMap.set(key, u);
+      }
+    });
+
+    return Array.from(uniqueMap.values());
   }
 
   static saveUser(user: UserProfile, adminEmail: string): void {

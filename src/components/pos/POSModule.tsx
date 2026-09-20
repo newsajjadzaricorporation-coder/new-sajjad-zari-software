@@ -83,6 +83,10 @@ interface SavedPOSSession {
 
 const getInitialPOSSession = (): SavedPOSSession => {
   try {
+    const rawLocalFull = localStorage.getItem('NSZ_POS_SAVED_CART_FULL');
+    if (rawLocalFull) {
+      return JSON.parse(rawLocalFull);
+    }
     const rawSession = sessionStorage.getItem('NSZ_POS_SESSION_TRANSACTION');
     if (rawSession) {
       return JSON.parse(rawSession);
@@ -200,7 +204,6 @@ const POSModuleComponent: React.FC<POSModuleProps> = ({
   // Automatically persist ongoing transaction to sessionStorage and cart to localStorage
   useEffect(() => {
     try {
-      localStorage.setItem('NSZ_POS_SAVED_CART', JSON.stringify(cart));
       const sessionData: SavedPOSSession = {
         cart,
         selectedCustomerId,
@@ -214,6 +217,8 @@ const POSModuleComponent: React.FC<POSModuleProps> = ({
         isRedeemingPoints,
         pointsToRedeemInput,
       };
+      localStorage.setItem('NSZ_POS_SAVED_CART_FULL', JSON.stringify(sessionData));
+      localStorage.setItem('NSZ_POS_SAVED_CART', JSON.stringify(cart));
       sessionStorage.setItem('NSZ_POS_SESSION_TRANSACTION', JSON.stringify(sessionData));
     } catch {
       // ignore storage errors
@@ -542,6 +547,7 @@ const POSModuleComponent: React.FC<POSModuleProps> = ({
     setIsRedeemingPoints(false);
     setPointsToRedeemInput('');
     try {
+      localStorage.removeItem('NSZ_POS_SAVED_CART_FULL');
       localStorage.removeItem('NSZ_POS_SAVED_CART');
       sessionStorage.removeItem('NSZ_POS_SESSION_TRANSACTION');
     } catch {

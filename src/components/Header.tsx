@@ -345,9 +345,9 @@ export const Header: React.FC<HeaderProps> = ({
                       Switch User Profile
                     </label>
                     <div className="space-y-1 max-h-36 overflow-y-auto">
-                      {allUsers.map((u) => (
+                      {allUsers.map((u, idx) => (
                         <button
-                          key={u.uid}
+                          key={u.uid || `user-${idx}`}
                           onClick={() => {
                             onSwitchUser(u);
                             setShowUserMenu(false);

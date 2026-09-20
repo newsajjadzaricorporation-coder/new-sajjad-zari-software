@@ -251,9 +251,9 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                   Select User Account:
                 </label>
                 <div className="grid grid-cols-1 gap-2">
-                  {allUsers.map((u) => (
+                  {allUsers.map((u, idx) => (
                     <button
-                      key={u.uid}
+                      key={u.uid || `user-${idx}`}
                       type="button"
                       onClick={() => {
                         setSelectedUserId(u.uid);

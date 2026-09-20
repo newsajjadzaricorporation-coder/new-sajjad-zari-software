@@ -192,6 +192,78 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
     return ['All', ...Array.from(s)];
   }, [products]);
 
+  // Predictive Stock Reorder Suggestion Engine Controls & Calculations
+  const [activeInventoryTab, setActiveInventoryTab] = useState<'catalog' | 'reorder_engine'>('catalog');
+  const [targetBufferDays, setTargetBufferDays] = useState<number>(30);
+  const [reorderUrgencyFilter, setReorderUrgencyFilter] = useState<'all' | 'urgent' | 'low'>('all');
+
+  const reorderSuggestions = useMemo(() => {
+    const sales = OfflineDB.getSales();
+    const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+
+    // Aggregate sales by productId past 30 days
+    const sales30DaysMap = new Map<string, number>();
+    sales.forEach((s) => {
+      const saleTs = s.timestamp || (s.date ? new Date(s.date).getTime() : 0);
+      if (saleTs >= thirtyDaysAgo && s.items) {
+        s.items.forEach((item) => {
+          if (item.product?.id) {
+            const qty = Number(item.quantity) || 0;
+            sales30DaysMap.set(item.product.id, (sales30DaysMap.get(item.product.id) || 0) + qty);
+          }
+        });
+      }
+    });
+
+    return products.map((p) => {
+      const unitsSold30Days = sales30DaysMap.get(p.id) || 0;
+      const dailyVelocity = parseFloat((unitsSold30Days / 30).toFixed(2));
+      const daysOfStock = dailyVelocity > 0 ? Math.round(p.stock / dailyVelocity) : (p.stock > 0 ? 999 : 0);
+      
+      let suggestedQty = 0;
+      if (dailyVelocity > 0) {
+        const required = Math.ceil(dailyVelocity * targetBufferDays);
+        suggestedQty = Math.max(0, required - p.stock);
+      } else if (p.stock <= p.minStockAlert) {
+        suggestedQty = Math.max(10, (p.minStockAlert || 5) * 2 - p.stock);
+      }
+
+      const estimatedCost = Math.round(suggestedQty * (p.costPrice || 0));
+
+      let urgency: 'CRITICAL' | 'HIGH' | 'RECOMMENDED' | 'ADEQUATE' = 'ADEQUATE';
+      if (p.stock <= 0 || daysOfStock <= 3) {
+        urgency = 'CRITICAL';
+      } else if (p.stock <= (p.minStockAlert || 5) || daysOfStock <= 7) {
+        urgency = 'HIGH';
+      } else if (daysOfStock <= targetBufferDays / 2) {
+        urgency = 'RECOMMENDED';
+      }
+
+      return {
+        product: p,
+        unitsSold30Days,
+        dailyVelocity,
+        daysOfStock,
+        suggestedQty,
+        estimatedCost,
+        urgency,
+      };
+    }).sort((a, b) => {
+      const urgencyScore = { CRITICAL: 4, HIGH: 3, RECOMMENDED: 2, ADEQUATE: 1 };
+      return urgencyScore[b.urgency] - urgencyScore[a.urgency] || b.suggestedQty - a.suggestedQty;
+    });
+  }, [products, targetBufferDays]);
+
+  const filteredReorderSuggestions = useMemo(() => {
+    if (reorderUrgencyFilter === 'urgent') {
+      return reorderSuggestions.filter((r) => r.urgency === 'CRITICAL' || r.urgency === 'HIGH');
+    }
+    if (reorderUrgencyFilter === 'low') {
+      return reorderSuggestions.filter((r) => r.suggestedQty > 0);
+    }
+    return reorderSuggestions;
+  }, [reorderSuggestions, reorderUrgencyFilter]);
+
   // Stock Valuation Metrics
   const metrics = useMemo(() => {
     const totalProducts = products.length;
@@ -786,11 +858,45 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
               Stock & Inventory Control
             </h2>
             <p className="text-xs sm:text-sm text-slate-400 mt-0.5">
-              Live valuation, SKU barcodes, unit pricing, and low-stock alerts
+              Live valuation, SKU barcodes, unit pricing, low-stock alerts & predictive reorder engine
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {/* Sub-Tab View Switcher */}
+            <div className="p-1 rounded-xl bg-slate-950 border border-slate-800 flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setActiveInventoryTab('catalog')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                  activeInventoryTab === 'catalog'
+                    ? 'bg-amber-500 text-slate-950 shadow-sm'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Package className="w-3.5 h-3.5" />
+                <span>Product Catalog</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveInventoryTab('reorder_engine')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                  activeInventoryTab === 'reorder_engine'
+                    ? 'bg-amber-500 text-slate-950 shadow-sm'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <TrendingUp className="w-3.5 h-3.5" />
+                <span>Stock Reorder Engine</span>
+                {reorderSuggestions.filter((r) => r.suggestedQty > 0).length > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-rose-500 text-white font-bold">
+                    {reorderSuggestions.filter((r) => r.suggestedQty > 0).length}
+                  </span>
+                )}
+              </button>
+            </div>
+
             {/* Export Low-Stock Report Button */}
             <button
               onClick={handleExportLowStockReport}
@@ -802,7 +908,7 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
               title="Export low stock & out-of-stock items report"
             >
               <AlertTriangle className={`w-4 h-4 ${metrics.lowStockCount > 0 ? 'text-amber-400' : 'text-slate-400'}`} />
-              Export Low-Stock Report ({metrics.lowStockCount + metrics.outOfStockCount})
+              Export Low-Stock ({metrics.lowStockCount + metrics.outOfStockCount})
             </button>
 
             <button
@@ -854,8 +960,247 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
             </button>
           </div>
         </div>
+      </div>
 
-        {/* Stock Valuation Summary Widgets */}
+      {activeInventoryTab === 'reorder_engine' ? (
+        /* ================= PREDICTIVE STOCK REORDER ENGINE VIEW ================= */
+        <div className="space-y-6">
+          {/* Controls Bar */}
+          <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-xl">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-400">
+                <TrendingUp className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-white flex items-center gap-2">
+                  <span>Predictive 'Stock Reorder' Suggestion Engine</span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                    AI Sales Velocity Model
+                  </span>
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Calculates required procurement quantities based on 30-day sales velocity and stock burn rate
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              {/* Buffer Days Selector */}
+              <div className="flex items-center gap-2 bg-slate-900 px-3 py-1.5 rounded-xl border border-slate-800">
+                <span className="text-xs text-slate-400 font-semibold">Target Buffer:</span>
+                {[14, 30, 45].map((days) => (
+                  <button
+                    key={days}
+                    type="button"
+                    onClick={() => setTargetBufferDays(days)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition ${
+                      targetBufferDays === days
+                        ? 'bg-amber-500 text-slate-950'
+                        : 'text-slate-400 hover:text-white bg-slate-800'
+                    }`}
+                  >
+                    {days} Days
+                  </button>
+                ))}
+              </div>
+
+              {/* Urgency Filter */}
+              <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setReorderUrgencyFilter('all')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition ${
+                    reorderUrgencyFilter === 'all'
+                      ? 'bg-slate-700 text-white'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  All Items
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setReorderUrgencyFilter('urgent')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition ${
+                    reorderUrgencyFilter === 'urgent'
+                      ? 'bg-rose-500 text-white'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Urgent Only
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setReorderUrgencyFilter('low')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition ${
+                    reorderUrgencyFilter === 'low'
+                      ? 'bg-amber-500 text-slate-950'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Reorder Needed
+                </button>
+              </div>
+
+              {/* Export Reorder Sheet */}
+              <button
+                type="button"
+                onClick={() => {
+                  const headers = [
+                    'SKU',
+                    'Product Name',
+                    'Category',
+                    'Current Stock',
+                    '30-Day Velocity (units/day)',
+                    'Days of Stock Remaining',
+                    'Suggested Reorder Qty',
+                    'Est. Purchase Cost (Rs)',
+                    'Reorder Urgency',
+                  ];
+                  const rows = filteredReorderSuggestions.map((r) => [
+                    r.product.sku,
+                    r.product.name,
+                    r.product.category,
+                    r.product.stock,
+                    r.dailyVelocity,
+                    r.daysOfStock === 999 ? 'High Stock' : r.daysOfStock,
+                    r.suggestedQty,
+                    r.estimatedCost,
+                    r.urgency,
+                  ]);
+                  exportToCSV(`stock_reorder_suggestions_${new Date().toISOString().slice(0, 10)}`, headers, rows);
+                }}
+                className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow transition cursor-pointer"
+              >
+                <Download className="w-4 h-4" />
+                <span>Export Reorder List</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Key Reorder Summary KPI Widgets */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-1">
+              <span className="text-xs font-medium text-slate-400">Total Products to Reorder</span>
+              <div className="text-2xl font-black text-amber-400 flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 text-amber-400" />
+                {reorderSuggestions.filter((r) => r.suggestedQty > 0).length} Items
+              </div>
+              <div className="text-[11px] text-slate-400">To maintain {targetBufferDays}-day inventory buffer</div>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-1">
+              <span className="text-xs font-medium text-slate-400">Estimated Reorder Budget</span>
+              <div className="text-2xl font-black text-emerald-400 flex items-center gap-2">
+                <DollarSign className="w-5 h-5 text-emerald-400" />
+                Rs {reorderSuggestions.reduce((sum, r) => sum + r.estimatedCost, 0).toLocaleString()}
+              </div>
+              <div className="text-[11px] text-slate-400">Based on catalog cost prices</div>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-1">
+              <span className="text-xs font-medium text-slate-400">Critical Out-of-Stock Items</span>
+              <div className="text-2xl font-black text-rose-400 flex items-center gap-2">
+                <ShieldAlert className="w-5 h-5 text-rose-400" />
+                {reorderSuggestions.filter((r) => r.urgency === 'CRITICAL').length} Items
+              </div>
+              <div className="text-[11px] text-slate-400">Immediate purchase order required</div>
+            </div>
+          </div>
+
+          {/* Reorder Suggestions Table */}
+          <div className="p-5 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-amber-400" />
+                <span>Predictive Reorder Quantity & Stock Burn Matrix</span>
+              </h3>
+              <span className="text-xs text-slate-400">
+                Showing {filteredReorderSuggestions.length} products
+              </span>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="bg-slate-950 text-slate-400 border-b border-slate-800 uppercase font-semibold">
+                    <th className="py-3 px-4">Product / SKU</th>
+                    <th className="py-3 px-4">Category</th>
+                    <th className="py-3 px-4 text-center">Current Stock</th>
+                    <th className="py-3 px-4 text-center">30D Velocity</th>
+                    <th className="py-3 px-4 text-center">Days Remaining</th>
+                    <th className="py-3 px-4 text-center font-bold text-amber-300">Suggested Reorder Qty</th>
+                    <th className="py-3 px-4 text-right">Est. Cost (Rs)</th>
+                    <th className="py-3 px-4 text-center">Reorder Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60 text-slate-200">
+                  {filteredReorderSuggestions.map((item, idx) => {
+                    const { product, dailyVelocity, daysOfStock, suggestedQty, estimatedCost, urgency } = item;
+                    const isCritical = urgency === 'CRITICAL';
+                    const isHigh = urgency === 'HIGH';
+
+                    return (
+                      <tr key={product.id || `reorder-${idx}`} className="hover:bg-slate-800/40 transition">
+                        <td className="py-3 px-4 font-bold text-white">
+                          <div>
+                            <div>{product.name}</div>
+                            <span className="text-[10px] text-slate-500 font-mono">SKU: {product.sku}</span>
+                          </div>
+                        </td>
+                        <td className="py-3 px-4 text-slate-400">{product.category}</td>
+                        <td className="py-3 px-4 text-center font-mono font-bold">
+                          <span className={product.stock <= 0 ? 'text-rose-400 font-black' : 'text-slate-200'}>
+                            {product.stock} {product.unit}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-center font-mono text-cyan-400 font-semibold">
+                          {dailyVelocity > 0 ? `${dailyVelocity} / day` : '0 / day'}
+                        </td>
+                        <td className="py-3 px-4 text-center font-mono font-bold">
+                          {daysOfStock === 999 ? (
+                            <span className="text-emerald-400">High Buffer</span>
+                          ) : daysOfStock <= 3 ? (
+                            <span className="text-rose-400 animate-pulse">{daysOfStock} days</span>
+                          ) : (
+                            <span className="text-amber-300">{daysOfStock} days</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 text-center font-mono text-sm font-black text-amber-400 bg-amber-500/10 rounded-lg">
+                          {suggestedQty > 0 ? `+${suggestedQty} ${product.unit}` : '0 (OK)'}
+                        </td>
+                        <td className="py-3 px-4 text-right font-mono font-bold text-emerald-400">
+                          Rs {estimatedCost.toLocaleString()}
+                        </td>
+                        <td className="py-3 px-4 text-center">
+                          {isCritical ? (
+                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-rose-500/20 text-rose-300 border border-rose-500/40">
+                              CRITICAL OUT OF STOCK
+                            </span>
+                          ) : isHigh ? (
+                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                              REORDER URGENT
+                            </span>
+                          ) : suggestedQty > 0 ? (
+                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                              REORDER RECOMMENDED
+                            </span>
+                          ) : (
+                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                              ADEQUATE STOCK
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      ) : (
+        /* ================= STANDARD PRODUCT CATALOG VIEW ================= */
+        <>
         <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-5 gap-3">
           {/* Total Products */}
           <div className="p-4 rounded-2xl bg-slate-800/70 border border-slate-700/80 space-y-1">
@@ -1067,7 +1412,6 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
             </ResponsiveContainer>
           </div>
         </div>
-      </div>
 
       {/* Filter and Search Bar */}
       <div className="flex flex-col sm:flex-row items-center gap-3 bg-slate-950/60 p-3 rounded-2xl border border-slate-800">
@@ -1413,6 +1757,8 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
           itemName="products"
         />
       </div>
+      </>
+      )}
 
       {/* ================= ADD / EDIT PRODUCT MODAL ================= */}
       {isEditModalOpen && editingProduct && (

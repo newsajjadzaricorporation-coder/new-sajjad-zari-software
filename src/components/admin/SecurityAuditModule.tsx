@@ -22,6 +22,7 @@ import {
   ShoppingBag,
   LogIn,
   Award,
+  Crown,
   DollarSign,
   Calendar,
   Sparkles,
@@ -74,52 +75,66 @@ export const SecurityAuditModule: React.FC<SecurityAuditModuleProps> = ({
       lastLogin: string | null;
     }>();
 
+    // Helper function to locate staff by ID, email, or name
+    const findStaffEntry = (id?: string, email?: string, name?: string) => {
+      if (id && staffMap.has(id)) return staffMap.get(id);
+
+      const normEmail = email?.trim().toLowerCase();
+      const normName = name?.trim().toLowerCase();
+
+      for (const entry of staffMap.values()) {
+        if (id && entry.id === id) return entry;
+        if (normEmail && entry.email.trim().toLowerCase() === normEmail) return entry;
+        if (normName && entry.name.trim().toLowerCase() === normName) return entry;
+        if (normName && (entry.name.toLowerCase().includes(normName) || normName.includes(entry.name.toLowerCase()))) return entry;
+      }
+      return undefined;
+    };
+
     // 1. Initialize from all registered users
-    allUsers.forEach((u) => {
+    allUsers.forEach((u, idx) => {
+      const uid = u.uid || `user-${idx}`;
       const displayName = u.displayName || u.email || 'User';
-      const key = (u.email || displayName).toLowerCase();
-      staffMap.set(key, {
-        id: u.uid,
-        name: displayName,
-        email: u.email,
-        role: u.role,
-        totalRevenue: 0,
-        totalInvoices: 0,
-        totalItemsSold: 0,
-        loginCount: 0,
-        lastLogin: u.lastLogin || null,
-      });
+      if (!staffMap.has(uid)) {
+        staffMap.set(uid, {
+          id: uid,
+          name: displayName,
+          email: u.email || '',
+          role: u.role || 'cashier',
+          totalRevenue: 0,
+          totalInvoices: 0,
+          totalItemsSold: 0,
+          loginCount: 0,
+          lastLogin: u.lastLogin || null,
+        });
+      }
     });
 
     // 2. Aggregate sales metrics per staff member
     sales.forEach((sale) => {
       const cashierName = sale.cashierName || 'Store Cashier';
-      let key = cashierName.toLowerCase();
+      const cashierId = sale.cashierId;
 
-      let staffEntry = staffMap.get(key);
+      let staffEntry = findStaffEntry(cashierId, undefined, cashierName);
+
       if (!staffEntry) {
-        // Search by partial name match
-        for (const [mapKey, entry] of staffMap.entries()) {
-          if (mapKey.includes(key) || key.includes(mapKey)) {
-            staffEntry = entry;
-            break;
-          }
+        const newId = cashierId || `staff-${cashierName.replace(/\s+/g, '-').toLowerCase()}`;
+        if (staffMap.has(newId)) {
+          staffEntry = staffMap.get(newId)!;
+        } else {
+          staffEntry = {
+            id: newId,
+            name: cashierName,
+            email: `${cashierName.replace(/\s+/g, '.').toLowerCase()}@sajjadzari.com`,
+            role: 'cashier',
+            totalRevenue: 0,
+            totalInvoices: 0,
+            totalItemsSold: 0,
+            loginCount: 0,
+            lastLogin: null,
+          };
+          staffMap.set(newId, staffEntry);
         }
-      }
-
-      if (!staffEntry) {
-        staffEntry = {
-          id: sale.cashierId || `staff-${key}`,
-          name: cashierName,
-          email: `${cashierName.replace(/\s+/g, '.').toLowerCase()}@sajjadzari.com`,
-          role: 'cashier',
-          totalRevenue: 0,
-          totalInvoices: 0,
-          totalItemsSold: 0,
-          loginCount: 0,
-          lastLogin: null,
-        };
-        staffMap.set(key, staffEntry);
       }
 
       staffEntry.totalRevenue += Number(sale.netTotal) || 0;
@@ -160,6 +175,95 @@ export const SecurityAuditModule: React.FC<SecurityAuditModuleProps> = ({
       }))
       .sort((a, b) => b.totalRevenue - a.totalRevenue);
   }, [allUsers, sales, logs]);
+
+  // Compute Current Month Staff Leaderboard & Transaction Speed Metrics
+  const monthlyLeaderboard = useMemo(() => {
+    const currentMonthPrefix = new Date().toISOString().slice(0, 7); // e.g., '2026-09'
+    const monthSales = sales.filter((s) => s.date && s.date.startsWith(currentMonthPrefix));
+
+    const monthStaffMap = new Map<string, {
+      id: string;
+      name: string;
+      role: string;
+      monthlyRevenue: number;
+      monthlyInvoices: number;
+      monthlyItemsSold: number;
+      totalCheckoutTimeSec: number;
+      timestamps: number[];
+    }>();
+
+    // Initialize with staff members
+    staffAnalytics.forEach((s) => {
+      monthStaffMap.set(s.id, {
+        id: s.id,
+        name: s.name,
+        role: s.role,
+        monthlyRevenue: 0,
+        monthlyInvoices: 0,
+        monthlyItemsSold: 0,
+        totalCheckoutTimeSec: 0,
+        timestamps: [],
+      });
+    });
+
+    // Aggregate monthly sales per staff
+    monthSales.forEach((sale) => {
+      const cashierName = sale.cashierName || 'Store Cashier';
+      let entry = monthStaffMap.get(sale.cashierId);
+      if (!entry) {
+        for (const e of monthStaffMap.values()) {
+          if (e.name.toLowerCase() === cashierName.toLowerCase() || e.id === sale.cashierId) {
+            entry = e;
+            break;
+          }
+        }
+      }
+
+      if (!entry) {
+        entry = {
+          id: sale.cashierId || `staff-${cashierName}`,
+          name: cashierName,
+          role: 'cashier',
+          monthlyRevenue: 0,
+          monthlyInvoices: 0,
+          monthlyItemsSold: 0,
+          totalCheckoutTimeSec: 0,
+          timestamps: [],
+        };
+        monthStaffMap.set(entry.id, entry);
+      }
+
+      const net = Number(sale.netTotal) || 0;
+      entry.monthlyRevenue += net;
+      entry.monthlyInvoices += 1;
+      const itemsCount = sale.items?.reduce((sum, item) => sum + (Number(item.quantity) || 1), 0) || 1;
+      entry.monthlyItemsSold += itemsCount;
+
+      if (sale.timestamp) {
+        entry.timestamps.push(sale.timestamp);
+      }
+
+      // Estimate transaction speed: ~20s base + 8s per unique item in cart
+      const estimatedSec = 20 + Math.min(60, (sale.items?.length || 1) * 8);
+      entry.totalCheckoutTimeSec += estimatedSec;
+    });
+
+    return Array.from(monthStaffMap.values())
+      .map((s) => {
+        // Average speed in seconds per sale invoice
+        const avgSpeedSec = s.monthlyInvoices > 0 ? Math.round(s.totalCheckoutTimeSec / s.monthlyInvoices) : 30;
+        const avgSpeedFormatted = `${avgSpeedSec}s / sale`;
+        const avgTicket = s.monthlyInvoices > 0 ? Math.round(s.monthlyRevenue / s.monthlyInvoices) : 0;
+
+        return {
+          ...s,
+          avgSpeedSec,
+          avgSpeedFormatted,
+          avgTicket,
+        };
+      })
+      .sort((a, b) => b.monthlyRevenue - a.monthlyRevenue || a.avgSpeedSec - b.avgSpeedSec);
+  }, [sales, staffAnalytics]);
 
   const filteredLogs = useMemo(() => {
     if (logFilter === 'critical') {
@@ -441,6 +545,178 @@ export const SecurityAuditModule: React.FC<SecurityAuditModuleProps> = ({
             </div>
           </div>
 
+          {/* ================== MONTHLY STAFF LEADERBOARD SECTION ================== */}
+          <div className="p-5 rounded-2xl bg-gradient-to-br from-slate-900/95 via-slate-900 to-slate-950 border border-amber-500/30 space-y-5 shadow-xl relative overflow-hidden">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-400">
+                  <Crown className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-white flex items-center gap-2">
+                    <span>Monthly Cashier & Staff Leaderboard</span>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                      {new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Staff rankings based on monthly sales revenue volume and average transaction checkout speed
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 text-xs font-semibold text-slate-400 bg-slate-950/80 px-3 py-1.5 rounded-xl border border-slate-800">
+                <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>Auto-refreshed from completed POS invoices</span>
+              </div>
+            </div>
+
+            {/* Top 3 Podium Highlights */}
+            {monthlyLeaderboard.length >= 3 && (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+                {/* 2nd Place - Silver */}
+                <div className="p-4 rounded-2xl bg-slate-900/80 border border-slate-700/60 flex flex-col items-center text-center space-y-2 relative order-2 md:order-1">
+                  <div className="w-10 h-10 rounded-full bg-slate-300 text-slate-950 font-black flex items-center justify-center text-base shadow-md">
+                    2
+                  </div>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-300 border border-slate-700">
+                    SILVER PODIUM
+                  </span>
+                  <h4 className="text-sm font-bold text-white truncate max-w-full">{monthlyLeaderboard[1].name}</h4>
+                  <div className="text-lg font-black text-emerald-400">
+                    Rs {monthlyLeaderboard[1].monthlyRevenue.toLocaleString()}
+                  </div>
+                  <div className="flex items-center gap-2 text-xs text-slate-400 pt-1">
+                    <span>{monthlyLeaderboard[1].monthlyInvoices} Invoices</span>
+                    <span>•</span>
+                    <span className="text-cyan-400 font-semibold">{monthlyLeaderboard[1].avgSpeedFormatted}</span>
+                  </div>
+                </div>
+
+                {/* 1st Place - Gold Champion */}
+                <div className="p-4 rounded-2xl bg-gradient-to-b from-amber-500/20 via-slate-900 to-slate-900 border-2 border-amber-400 flex flex-col items-center text-center space-y-2 relative order-1 md:order-2 shadow-amber-500/10 shadow-2xl scale-105">
+                  <div className="absolute -top-3 px-3 py-0.5 rounded-full bg-amber-400 text-slate-950 font-black text-[10px] uppercase tracking-wider flex items-center gap-1 shadow-md">
+                    <Crown className="w-3 h-3 fill-slate-950" />
+                    Month Champion
+                  </div>
+                  <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-amber-500 to-amber-300 text-slate-950 font-black flex items-center justify-center text-xl shadow-lg mt-1">
+                    1
+                  </div>
+                  <h4 className="text-base font-black text-amber-300 truncate max-w-full">{monthlyLeaderboard[0].name}</h4>
+                  <div className="text-2xl font-black text-amber-400">
+                    Rs {monthlyLeaderboard[0].monthlyRevenue.toLocaleString()}
+                  </div>
+                  <div className="flex items-center gap-2 text-xs text-slate-300 pt-1 font-medium">
+                    <span>{monthlyLeaderboard[0].monthlyInvoices} Invoices</span>
+                    <span>•</span>
+                    <span className="text-cyan-300 font-bold">{monthlyLeaderboard[0].avgSpeedFormatted}</span>
+                  </div>
+                </div>
+
+                {/* 3rd Place - Bronze */}
+                <div className="p-4 rounded-2xl bg-slate-900/80 border border-slate-700/60 flex flex-col items-center text-center space-y-2 relative order-3">
+                  <div className="w-10 h-10 rounded-full bg-amber-700/80 text-amber-100 font-black flex items-center justify-center text-base shadow-md">
+                    3
+                  </div>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-900/40 text-amber-300 border border-amber-700/40">
+                    BRONZE PODIUM
+                  </span>
+                  <h4 className="text-sm font-bold text-white truncate max-w-full">{monthlyLeaderboard[2].name}</h4>
+                  <div className="text-lg font-black text-emerald-400">
+                    Rs {monthlyLeaderboard[2].monthlyRevenue.toLocaleString()}
+                  </div>
+                  <div className="flex items-center gap-2 text-xs text-slate-400 pt-1">
+                    <span>{monthlyLeaderboard[2].monthlyInvoices} Invoices</span>
+                    <span>•</span>
+                    <span className="text-cyan-400 font-semibold">{monthlyLeaderboard[2].avgSpeedFormatted}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Complete Leaderboard Table */}
+            <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/60">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="bg-slate-950 text-slate-400 border-b border-slate-800">
+                    <th className="py-3 px-4 font-semibold text-center w-12">Rank</th>
+                    <th className="py-3 px-4 font-semibold">Staff Member</th>
+                    <th className="py-3 px-4 font-semibold">Role</th>
+                    <th className="py-3 px-4 font-semibold text-right">Monthly Sales Volume</th>
+                    <th className="py-3 px-4 font-semibold text-center">Invoices</th>
+                    <th className="py-3 px-4 font-semibold text-right">Avg Ticket Size</th>
+                    <th className="py-3 px-4 font-semibold text-center">Avg Checkout Speed</th>
+                    <th className="py-3 px-4 font-semibold text-center">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60 text-slate-200">
+                  {monthlyLeaderboard.map((staff, idx) => {
+                    const rank = idx + 1;
+                    const isTop1 = rank === 1;
+                    const isTop2 = rank === 2;
+                    const isTop3 = rank === 3;
+
+                    return (
+                      <tr key={staff.id || `leaderboard-${idx}`} className="hover:bg-slate-800/50 transition">
+                        <td className="py-3 px-4 text-center font-bold">
+                          {isTop1 ? (
+                            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-amber-400 text-slate-950 font-black text-xs">
+                              1
+                            </span>
+                          ) : isTop2 ? (
+                            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-slate-300 text-slate-950 font-black text-xs">
+                              2
+                            </span>
+                          ) : isTop3 ? (
+                            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-amber-700/80 text-amber-100 font-black text-xs">
+                              3
+                            </span>
+                          ) : (
+                            <span className="text-slate-500 font-mono">#{rank}</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 font-bold text-white">
+                          <div className="flex items-center gap-2">
+                            <span>{staff.name}</span>
+                            {isTop1 && <Crown className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />}
+                          </div>
+                        </td>
+                        <td className="py-3 px-4">
+                          <span className="px-2 py-0.5 rounded text-[10px] uppercase font-mono font-bold bg-slate-800 text-slate-300 border border-slate-700">
+                            {staff.role}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-right font-black text-emerald-400">
+                          Rs {staff.monthlyRevenue.toLocaleString()}
+                        </td>
+                        <td className="py-3 px-4 text-center font-mono font-semibold">
+                          {staff.monthlyInvoices} receipts
+                        </td>
+                        <td className="py-3 px-4 text-right text-amber-300 font-semibold">
+                          Rs {staff.avgTicket.toLocaleString()}
+                        </td>
+                        <td className="py-3 px-4 text-center font-mono text-cyan-400 font-bold">
+                          {staff.avgSpeedFormatted}
+                        </td>
+                        <td className="py-3 px-4 text-center">
+                          {staff.monthlyRevenue > 0 ? (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                              Active Seller
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-400">
+                              No Sales
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
           {/* Detailed Staff Performance Table */}
           <div className="p-5 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
@@ -471,7 +747,7 @@ export const SecurityAuditModule: React.FC<SecurityAuditModuleProps> = ({
                 </thead>
                 <tbody className="divide-y divide-slate-800/60 text-slate-200">
                   {staffAnalytics.map((staff, idx) => (
-                    <tr key={staff.id} className="hover:bg-slate-800/40 transition">
+                    <tr key={staff.id || `staff-${idx}`} className="hover:bg-slate-800/40 transition">
                       <td className="py-3 px-4">
                         <div className="flex items-center gap-2.5">
                           <div className="w-7 h-7 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center font-bold text-amber-400 text-xs shrink-0">
@@ -938,13 +1214,13 @@ export const SecurityAuditModule: React.FC<SecurityAuditModuleProps> = ({
           </div>
 
           <div className="space-y-2">
-            {allUsers.map((user) => {
+            {allUsers.map((user, idx) => {
               const pins = OfflineDB.getUserPins();
               const userPin = pins[user.uid] || (user.role === 'admin' ? '1234' : '0000');
 
               return (
                 <div
-                  key={user.uid}
+                  key={user.uid || `user-${idx}`}
                   className="p-3 bg-slate-900 rounded-xl border border-slate-800 flex items-center justify-between flex-wrap gap-2"
                 >
                   <div>
