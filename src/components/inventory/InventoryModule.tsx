@@ -17,10 +17,18 @@ import {
   Eye,
   EyeOff,
   CheckSquare,
+  Sliders,
+  RotateCcw,
+  FolderInput,
+  ShieldAlert,
+  Tag,
+  AlertCircle,
+  FileDown,
 } from 'lucide-react';
 import { Product, UserProfile, UnitType } from '../../types';
 import { OfflineDB } from '../../services/db';
 import { CSVBulkImportModal } from './CSVBulkImportModal';
+import { BulkUpdateModal } from './BulkUpdateModal';
 import { PaginationControls } from '../common/PaginationControls';
 import { TableSkeleton } from '../common/SkeletonLoaders';
 import { exportToCSV } from '../../utils/csvExport';
@@ -51,6 +59,45 @@ function highlightMatch(text?: string | null, query?: string): React.ReactNode {
       )}
     </>
   );
+}
+
+// Fuzzy search helper supporting substring, multi-token, sub-sequence, and category/SKU/name matching
+function fuzzySearchMatch(target: string, query: string): boolean {
+  if (!target || !query) return false;
+  const t = target.toLowerCase();
+  const q = query.toLowerCase();
+
+  // 1. Direct Substring Match
+  if (t.includes(q)) return true;
+
+  // 2. Multi-token match: all space-separated terms in query exist in target
+  const tokens = q.split(/\s+/).filter(Boolean);
+  if (tokens.length > 1 && tokens.every((tok) => t.includes(tok))) {
+    return true;
+  }
+
+  // 3. Sub-sequence Fuzzy Match (characters appear in sequence)
+  let qIdx = 0;
+  for (let tIdx = 0; tIdx < t.length && qIdx < q.length; tIdx++) {
+    if (t[tIdx] === q[qIdx]) {
+      qIdx++;
+    }
+  }
+  if (qIdx === q.length) return true;
+
+  // 4. Token-level sub-sequence match
+  const tWords = t.split(/\s+/).filter(Boolean);
+  for (const word of tWords) {
+    let wIdx = 0;
+    for (let cIdx = 0; cIdx < word.length && wIdx < q.length; cIdx++) {
+      if (word[cIdx] === q[wIdx]) {
+        wIdx++;
+      }
+    }
+    if (wIdx === q.length) return true;
+  }
+
+  return false;
 }
 
 interface InventoryModuleProps {
@@ -93,6 +140,25 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
   const [productToDelete, setProductToDelete] = useState<Product | null>(null);
   const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
   const [isBatchDeleteModalOpen, setIsBatchDeleteModalOpen] = useState(false);
+  const [batchDeleteSafetyConfirmed, setBatchDeleteSafetyConfirmed] = useState(false);
+  const [isBulkUpdateModalOpen, setIsBulkUpdateModalOpen] = useState(false);
+
+  // Bulk Reset Stock State
+  const [isBulkResetStockModalOpen, setIsBulkResetStockModalOpen] = useState(false);
+  const [bulkResetStockValue, setBulkResetStockValue] = useState<string>('0');
+  const [bulkResetSafetyConfirmed, setBulkResetSafetyConfirmed] = useState(false);
+
+  // Move to Category State
+  const [isMoveCategoryModalOpen, setIsMoveCategoryModalOpen] = useState(false);
+  const [targetMoveCategory, setTargetMoveCategory] = useState<string>('');
+  const [customMoveCategory, setCustomMoveCategory] = useState<string>('');
+  const [moveCategorySafetyConfirmed, setMoveCategorySafetyConfirmed] = useState(false);
+
+  // Selected Product Objects for Bulk Actions
+  const selectedProducts = useMemo(
+    () => products.filter((p) => selectedProductIds.includes(p.id)),
+    [products, selectedProductIds]
+  );
 
   // CSV Import State
   const [isCsvModalOpen, setIsCsvModalOpen] = useState(false);
@@ -130,17 +196,22 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
     };
   }, [products]);
 
-  // Filtered products
+  // Filtered products with real-time fuzzy search
   const filteredProducts = useMemo(() => {
+    const q = searchQuery.toLowerCase().trim();
+
     return products.filter((p) => {
       const matchCat = selectedCategory === 'All' || p.category === selectedCategory;
-      const q = searchQuery.toLowerCase().trim();
-      const matchSearch =
-        !q ||
-        p.name.toLowerCase().includes(q) ||
-        (p.urduName && p.urduName.includes(q)) ||
-        p.sku.toLowerCase().includes(q) ||
-        p.barcode.includes(q);
+
+      let matchSearch = true;
+      if (q) {
+        matchSearch =
+          fuzzySearchMatch(p.name, q) ||
+          fuzzySearchMatch(p.sku, q) ||
+          fuzzySearchMatch(p.category, q) ||
+          (p.urduName ? p.urduName.toLowerCase().includes(q) || fuzzySearchMatch(p.urduName, q) : false) ||
+          p.barcode.toLowerCase().includes(q);
+      }
 
       let matchStock = true;
       if (stockFilter === 'low') matchStock = p.stock > 0 && p.stock <= p.minStockAlert;
@@ -156,7 +227,7 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
     return filteredProducts.slice(start, start + pageSize);
   }, [filteredProducts, currentPage, pageSize]);
 
-  // Export Selected Products (.CSV)
+  // Export Selected Products to Clean CSV Audit Report
   const handleExportSelected = () => {
     const selectedItems = products.filter((p) => selectedProductIds.includes(p.id));
     if (selectedItems.length === 0) return;
@@ -172,22 +243,43 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
       'Unit',
       'Barcode',
       'Min Stock Alert',
+      'Total Cost Valuation (Rs)',
+      'Total Retail Valuation (Rs)',
+      'Gross Profit Margin (Rs)',
+      'Margin Percentage (%)',
+      'Notes / Details',
     ];
 
-    const rows = selectedItems.map((p) => [
-      p.sku,
-      p.name,
-      p.urduName || '',
-      p.category,
-      p.costPrice || 0,
-      p.sellingPrice,
-      p.stock,
-      p.unit,
-      p.barcode,
-      p.minStockAlert,
-    ]);
+    const rows = selectedItems.map((p) => {
+      const cost = p.costPrice || 0;
+      const retail = p.sellingPrice || 0;
+      const stock = p.stock || 0;
+      const totalCost = cost * stock;
+      const totalRetail = retail * stock;
+      const profit = totalRetail - totalCost;
+      const marginPct = retail > 0 ? (((retail - cost) / retail) * 100).toFixed(1) : '0.0';
 
-    exportToCSV(`selected_inventory_${Date.now()}`, headers, rows);
+      return [
+        p.sku,
+        p.name,
+        p.urduName || '',
+        p.category,
+        cost,
+        retail,
+        stock,
+        p.unit,
+        p.barcode,
+        p.minStockAlert,
+        totalCost,
+        totalRetail,
+        profit,
+        `${marginPct}%`,
+        p.notes || '',
+      ];
+    });
+
+    const timestamp = new Date().toISOString().slice(0, 10);
+    exportToCSV(`inventory_selected_audit_report_${timestamp}`, headers, rows);
   };
 
   // Quick Stock Adjustment (+/- 1, 5, 10)
@@ -289,7 +381,198 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
 
   const handleOpenBatchDelete = () => {
     if (selectedProductIds.length === 0) return;
+    setBatchDeleteSafetyConfirmed(false);
     setIsBatchDeleteModalOpen(true);
+  };
+
+  const handleOpenBulkUpdate = () => {
+    if (selectedProductIds.length === 0) return;
+    setIsBulkUpdateModalOpen(true);
+  };
+
+  // Bulk Reset Stock Handlers
+  const handleOpenBulkResetStock = () => {
+    if (selectedProductIds.length === 0) return;
+    setBulkResetStockValue('0');
+    setBulkResetSafetyConfirmed(false);
+    setIsBulkResetStockModalOpen(true);
+  };
+
+  const handleConfirmBulkResetStock = async () => {
+    const targetStock = parseFloat(bulkResetStockValue);
+    if (isNaN(targetStock) || targetStock < 0 || selectedProductIds.length === 0) return;
+
+    setIsBulkResetStockModalOpen(false);
+    const count = selectedProductIds.length;
+
+    const updates = selectedProductIds.map((id) => ({
+      id,
+      stock: targetStock,
+    }));
+
+    setActionLoader({
+      isOpen: true,
+      title: 'Resetting Physical Stock',
+      description: `Setting stock to ${targetStock} units across ${count} selected product(s)...`,
+      currentCount: 0,
+      totalCount: count,
+      status: 'running',
+      actionIcon: 'database',
+    });
+
+    try {
+      await OfflineDB.batchUpdateProductsAsync(
+        updates,
+        currentUser?.email || 'admin',
+        (processed, total) => {
+          setActionLoader((prev) => ({
+            ...prev,
+            currentCount: processed,
+            totalCount: total,
+          }));
+        }
+      );
+
+      setSelectedProductIds([]);
+      setActionLoader((prev) => ({
+        ...prev,
+        status: 'completed',
+        description: `Successfully reset physical stock count for ${count} product(s) to ${targetStock} units.`,
+      }));
+
+      onRefreshProducts();
+
+      setTimeout(() => {
+        setActionLoader((prev) => ({ ...prev, isOpen: false }));
+      }, 1400);
+    } catch (err: any) {
+      setActionLoader((prev) => ({
+        ...prev,
+        status: 'error',
+        errorMessage: err?.message || 'Failed to complete physical stock reset.',
+      }));
+    }
+  };
+
+  // Move to Category Handlers
+  const handleOpenMoveCategory = (initialCategory?: string) => {
+    if (selectedProductIds.length === 0) return;
+    const catList = categories.filter((c) => c !== 'All');
+    setTargetMoveCategory(initialCategory || (catList.length > 0 ? catList[0] : 'General'));
+    setCustomMoveCategory('');
+    setMoveCategorySafetyConfirmed(false);
+    setIsMoveCategoryModalOpen(true);
+  };
+
+  const handleConfirmMoveCategory = async () => {
+    const finalCategory = (
+      targetMoveCategory === '__NEW__' ? customMoveCategory : targetMoveCategory
+    ).trim();
+
+    if (!finalCategory || selectedProductIds.length === 0) return;
+
+    setIsMoveCategoryModalOpen(false);
+    const count = selectedProductIds.length;
+
+    const updates = selectedProductIds.map((id) => ({
+      id,
+      category: finalCategory,
+    }));
+
+    setActionLoader({
+      isOpen: true,
+      title: 'Reclassifying Products',
+      description: `Moving ${count} product(s) into category "${finalCategory}"...`,
+      currentCount: 0,
+      totalCount: count,
+      status: 'running',
+      actionIcon: 'database',
+    });
+
+    try {
+      await OfflineDB.batchUpdateProductsAsync(
+        updates,
+        currentUser?.email || 'admin',
+        (processed, total) => {
+          setActionLoader((prev) => ({
+            ...prev,
+            currentCount: processed,
+            totalCount: total,
+          }));
+        }
+      );
+
+      setSelectedProductIds([]);
+      setActionLoader((prev) => ({
+        ...prev,
+        status: 'completed',
+        description: `Successfully reclassified ${count} product(s) to category "${finalCategory}".`,
+      }));
+
+      onRefreshProducts();
+
+      setTimeout(() => {
+        setActionLoader((prev) => ({ ...prev, isOpen: false }));
+      }, 1400);
+    } catch (err: any) {
+      setActionLoader((prev) => ({
+        ...prev,
+        status: 'error',
+        errorMessage: err?.message || 'Failed to reclassify products.',
+      }));
+    }
+  };
+
+  const handleApplyBulkUpdate = async (updates: Array<Partial<Product> & { id: string }>) => {
+    const count = updates.length;
+    setIsBulkUpdateModalOpen(false);
+
+    setActionLoader({
+      isOpen: true,
+      title: 'Bulk Updating Products',
+      description: `Applying stock adjustments and price updates across ${count} selected product(s)...`,
+      currentCount: 0,
+      totalCount: count,
+      status: 'running',
+      actionIcon: 'database',
+    });
+
+    try {
+      await OfflineDB.batchUpdateProductsAsync(
+        updates,
+        currentUser?.email || 'admin',
+        (processed, total) => {
+          setActionLoader((prev) => ({
+            ...prev,
+            currentCount: processed,
+            totalCount: total,
+          }));
+        }
+      );
+
+      setSelectedProductIds([]);
+      setActionLoader((prev) => ({
+        ...prev,
+        status: 'completed',
+        description: `Successfully updated stock & pricing for ${count} product(s) in catalog.`,
+      }));
+
+      onRefreshProducts();
+
+      setTimeout(() => {
+        setActionLoader((prev) => ({ ...prev, isOpen: false }));
+      }, 1400);
+    } catch (err: any) {
+      setActionLoader((prev) => ({
+        ...prev,
+        status: 'error',
+        errorMessage: err?.message || 'Failed to complete bulk product update.',
+      }));
+    }
+  };
+
+  const handleRemoveFromBulkSelection = (productId: string) => {
+    setSelectedProductIds((prev) => prev.filter((id) => id !== productId));
   };
 
   const confirmBatchDelete = async () => {
@@ -474,6 +757,17 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
               </button>
             )}
 
+            {selectedProductIds.length > 0 && (
+              <button
+                onClick={handleOpenBulkUpdate}
+                className="flex items-center gap-1.5 px-3.5 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-xl text-xs font-bold shadow-lg shadow-amber-500/20 transition animate-in fade-in cursor-pointer"
+                title="Bulk update stock levels or prices for selected products"
+              >
+                <Sliders className="w-4 h-4" />
+                Bulk Update ({selectedProductIds.length})
+              </button>
+            )}
+
             <button
               onClick={openNewProductModal}
               className="flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-xl text-xs sm:text-sm font-bold shadow-lg shadow-amber-500/20 transition"
@@ -579,7 +873,7 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
               setSearchQuery(e.target.value);
               setCurrentPage(1);
             }}
-            placeholder="Search by product name, Urdu name, SKU, or barcode (matching rows will be highlighted)..."
+            placeholder="Fuzzy search products by name, SKU, or category in real-time (highlighted rows)..."
             className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-9 pr-24 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-amber-400"
           />
           {searchQuery.trim().length > 0 && (
@@ -642,28 +936,67 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Bulk Update Stock & Price */}
+            <button
+              onClick={handleOpenBulkUpdate}
+              className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-xl font-bold flex items-center gap-1.5 shadow-lg shadow-amber-500/20 transition cursor-pointer"
+              title="Bulk update stock levels or prices for all selected products"
+            >
+              <Sliders className="w-3.5 h-3.5" />
+              <span>Bulk Update Stock & Price</span>
+            </button>
+
+            {/* Move to Category Dropdown / Button */}
+            <div className="flex items-center">
+              <button
+                onClick={() => handleOpenMoveCategory()}
+                className="px-3 py-1.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/30 rounded-xl font-bold flex items-center gap-1.5 shadow-md transition cursor-pointer"
+                title="Reclassify all selected products into a category"
+              >
+                <FolderInput className="w-3.5 h-3.5 text-blue-400" />
+                <span>Move to Category...</span>
+              </button>
+            </div>
+
+            {/* Bulk Reset Stock (Admin Feature) */}
+            {isAdmin && (
+              <button
+                onClick={handleOpenBulkResetStock}
+                className="px-3 py-1.5 bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/30 rounded-xl font-bold flex items-center gap-1.5 shadow-md transition cursor-pointer"
+                title="Set physical stock count for periodic inventory audit verification"
+              >
+                <RotateCcw className="w-3.5 h-3.5 text-purple-400" />
+                <span>Bulk Reset Stock</span>
+              </button>
+            )}
+
+            {/* Export Selected to CSV */}
             <button
               onClick={handleExportSelected}
               className="px-3.5 py-1.5 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 rounded-xl font-bold flex items-center gap-1.5 shadow-md transition cursor-pointer"
-              title="Export selected products to CSV spreadsheet"
+              title="Export selected inventory items as a clean CSV report for external audit"
             >
               <Download className="w-3.5 h-3.5" />
-              Export Selected ({selectedProductIds.length})
+              <span>Export Selected to CSV ({selectedProductIds.length})</span>
             </button>
+
+            {/* Delete Selected */}
+            <button
+              onClick={handleOpenBatchDelete}
+              className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold flex items-center gap-1.5 shadow-lg shadow-red-600/20 transition cursor-pointer"
+              title="Delete all selected products from inventory"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Delete Selected</span>
+            </button>
+
+            {/* Deselect All */}
             <button
               onClick={() => setSelectedProductIds([])}
               className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-semibold transition cursor-pointer"
             >
               Deselect All
-            </button>
-            <button
-              onClick={handleOpenBatchDelete}
-              className="px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold flex items-center gap-1.5 shadow-lg shadow-red-600/20 transition cursor-pointer"
-              title="Delete all selected products from inventory"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              Delete Selected ({selectedProductIds.length})
             </button>
           </div>
         </div>
@@ -1219,44 +1552,320 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
 
       {/* ================= IN-APP BATCH DELETE CONFIRMATION MODAL ================= */}
       {isBatchDeleteModalOpen && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-          <div className="relative w-full max-w-md bg-slate-900 border border-red-500/40 rounded-2xl shadow-2xl p-6 space-y-4">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/85 backdrop-blur-md p-4 animate-in fade-in">
+          <div className="relative w-full max-w-lg bg-slate-900 border border-red-500/50 rounded-2xl shadow-2xl p-6 space-y-4">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-red-500/20 border border-red-500/30 flex items-center justify-center shrink-0">
-                <Trash2 className="w-5 h-5 text-red-400" />
+              <div className="w-12 h-12 rounded-2xl bg-red-500/20 border border-red-500/40 flex items-center justify-center shrink-0">
+                <Trash2 className="w-6 h-6 text-red-400" />
               </div>
               <div>
-                <h3 className="text-base font-bold text-white">Batch Delete Selected Products</h3>
+                <h3 className="text-base font-bold text-white">Mass Deletion Safety Confirmation</h3>
                 <p className="text-xs text-slate-400">Permanently remove selected catalog items</p>
               </div>
             </div>
 
-            <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-2 text-xs">
-              <div className="text-slate-200 font-bold">
-                You are about to delete <span className="text-amber-400">{selectedProductIds.length}</span> selected product(s).
+            <div className="p-3.5 bg-slate-950 rounded-xl border border-slate-800 space-y-2.5 text-xs">
+              <div className="text-slate-200 font-bold flex items-center justify-between">
+                <span>Items Selected for Deletion:</span>
+                <span className="text-red-400 font-mono text-sm">{selectedProductIds.length} products</span>
               </div>
-              <p className="text-slate-400 text-[11px]">
-                This will purge these records from the local inventory and write audit log entries.
+              <p className="text-slate-400 text-[11px] leading-relaxed">
+                ⚠️ <strong className="text-slate-200">Warning:</strong> Deleting these products will purge them from POS catalog search and barcode lookup. Historical sales logs will retain their line items.
               </p>
+
+              {/* Scrollable list preview */}
+              <div className="max-h-40 overflow-y-auto rounded-lg border border-slate-800 bg-slate-900/80 p-2 divide-y divide-slate-800/60 custom-scrollbar">
+                {selectedProducts.slice(0, 15).map((p) => (
+                  <div key={p.id} className="py-1.5 flex items-center justify-between text-[11px]">
+                    <div className="truncate mr-2">
+                      <span className="font-semibold text-white">{p.name}</span>
+                      <span className="text-slate-500 font-mono ml-1.5">({p.sku})</span>
+                    </div>
+                    <span className="text-slate-400 shrink-0 font-mono">
+                      {p.stock} {p.unit}
+                    </span>
+                  </div>
+                ))}
+                {selectedProducts.length > 15 && (
+                  <div className="py-1 text-center text-[10px] text-slate-500 italic">
+                    ...and {selectedProducts.length - 15} more items
+                  </div>
+                )}
+              </div>
             </div>
 
-            <div className="flex items-center justify-end gap-2 pt-2">
+            {/* Safety Confirmation Checkbox */}
+            <label className="flex items-start gap-2.5 p-3 rounded-xl bg-red-500/10 border border-red-500/30 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={batchDeleteSafetyConfirmed}
+                onChange={(e) => setBatchDeleteSafetyConfirmed(e.target.checked)}
+                className="mt-0.5 rounded border-red-500/50 bg-slate-900 text-red-500 focus:ring-0 w-4 h-4 cursor-pointer"
+              />
+              <span className="text-xs text-red-200/90 leading-snug">
+                I understand that deleting {selectedProductIds.length} product(s) is irreversible and removes them from active inventory.
+              </span>
+            </label>
+
+            <div className="flex items-center justify-end gap-2 pt-1">
               <button
+                type="button"
                 onClick={() => setIsBatchDeleteModalOpen(false)}
-                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold"
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold cursor-pointer"
               >
                 Cancel
               </button>
               <button
+                type="button"
                 onClick={confirmBatchDelete}
-                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shadow-lg shadow-red-600/20"
+                disabled={!batchDeleteSafetyConfirmed}
+                className={`px-5 py-2 rounded-xl text-xs font-bold shadow-lg transition ${
+                  batchDeleteSafetyConfirmed
+                    ? 'bg-red-600 hover:bg-red-700 text-white shadow-red-600/30 cursor-pointer'
+                    : 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                }`}
               >
-                Delete Selected ({selectedProductIds.length})
+                Confirm Mass Deletion ({selectedProductIds.length})
               </button>
             </div>
           </div>
         </div>
       )}
+
+      {/* ================= BULK RESET STOCK SAFETY CONFIRMATION MODAL ================= */}
+      {isBulkResetStockModalOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/85 backdrop-blur-md p-4 animate-in fade-in">
+          <div className="relative w-full max-w-lg bg-slate-900 border border-purple-500/50 rounded-2xl shadow-2xl p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-purple-500/20 border border-purple-500/40 flex items-center justify-center shrink-0">
+                <RotateCcw className="w-6 h-6 text-purple-400" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Bulk Reset Physical Stock</h3>
+                <p className="text-xs text-slate-400">
+                  Periodic physical inventory count verification & stock override
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-slate-950 rounded-xl border border-slate-800 space-y-3 text-xs">
+              <div className="flex items-center justify-between">
+                <label className="text-slate-300 font-semibold">Target Physical Stock Count:</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={bulkResetStockValue}
+                    onChange={(e) => setBulkResetStockValue(e.target.value)}
+                    className="w-24 px-3 py-1.5 bg-slate-900 border border-purple-500/50 rounded-lg text-white font-mono font-bold text-center focus:outline-none focus:border-purple-400 text-sm"
+                  />
+                  <span className="text-slate-400 text-xs">units</span>
+                </div>
+              </div>
+
+              <div className="p-2.5 rounded-lg bg-purple-500/10 border border-purple-500/20 text-[11px] text-purple-200">
+                ⚠️ <strong>Audit Notice:</strong> Setting physical stock will override the current stock quantity for all <strong className="text-white">{selectedProductIds.length}</strong> selected products to exactly <strong className="text-white">{bulkResetStockValue || 0} units</strong>. Discrepancies are recorded in audit logs.
+              </div>
+
+              {/* Scrollable Preview List */}
+              <div className="max-h-40 overflow-y-auto rounded-lg border border-slate-800 bg-slate-900/80 p-2 divide-y divide-slate-800/60 custom-scrollbar">
+                {selectedProducts.slice(0, 15).map((p) => {
+                  const targetNum = parseFloat(bulkResetStockValue) || 0;
+                  const diff = targetNum - p.stock;
+                  return (
+                    <div key={p.id} className="py-1.5 flex items-center justify-between text-[11px]">
+                      <div className="truncate mr-2">
+                        <span className="font-semibold text-white">{p.name}</span>
+                        <span className="text-slate-500 font-mono ml-1.5">({p.sku})</span>
+                      </div>
+                      <div className="flex items-center gap-2 font-mono shrink-0">
+                        <span className="text-slate-400">{p.stock}</span>
+                        <span className="text-slate-600">→</span>
+                        <span className="font-bold text-purple-300">{targetNum}</span>
+                        <span className={`text-[10px] font-bold ${diff > 0 ? 'text-emerald-400' : diff < 0 ? 'text-rose-400' : 'text-slate-500'}`}>
+                          ({diff > 0 ? `+${diff}` : diff})
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+                {selectedProducts.length > 15 && (
+                  <div className="py-1 text-center text-[10px] text-slate-500 italic">
+                    ...and {selectedProducts.length - 15} more items
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Safety Confirmation Checkbox */}
+            <label className="flex items-start gap-2.5 p-3 rounded-xl bg-purple-500/10 border border-purple-500/30 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={bulkResetSafetyConfirmed}
+                onChange={(e) => setBulkResetSafetyConfirmed(e.target.checked)}
+                className="mt-0.5 rounded border-purple-500/50 bg-slate-900 text-purple-500 focus:ring-0 w-4 h-4 cursor-pointer"
+              />
+              <span className="text-xs text-purple-200/90 leading-snug">
+                I confirm that physical stock verification was conducted and I approve setting stock to {bulkResetStockValue || 0} units across {selectedProductIds.length} products.
+              </span>
+            </label>
+
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setIsBulkResetStockModalOpen(false)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmBulkResetStock}
+                disabled={!bulkResetSafetyConfirmed || isNaN(parseFloat(bulkResetStockValue))}
+                className={`px-5 py-2 rounded-xl text-xs font-bold shadow-lg transition ${
+                  bulkResetSafetyConfirmed && !isNaN(parseFloat(bulkResetStockValue))
+                    ? 'bg-purple-600 hover:bg-purple-500 text-white shadow-purple-600/30 cursor-pointer'
+                    : 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                }`}
+              >
+                Confirm Physical Stock Reset ({selectedProductIds.length})
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= MOVE TO CATEGORY SAFETY CONFIRMATION MODAL ================= */}
+      {isMoveCategoryModalOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/85 backdrop-blur-md p-4 animate-in fade-in">
+          <div className="relative w-full max-w-lg bg-slate-900 border border-blue-500/50 rounded-2xl shadow-2xl p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-blue-500/20 border border-blue-500/40 flex items-center justify-center shrink-0">
+                <FolderInput className="w-6 h-6 text-blue-400" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Move to Category (Reclassify)</h3>
+                <p className="text-xs text-slate-400">
+                  Bulk assign selected products to a new or existing category
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-slate-950 rounded-xl border border-slate-800 space-y-3 text-xs">
+              <div className="space-y-1.5">
+                <label className="text-slate-300 font-semibold block">Select Target Category:</label>
+                <select
+                  value={targetMoveCategory}
+                  onChange={(e) => setTargetMoveCategory(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-white font-medium text-xs focus:outline-none focus:border-blue-400"
+                >
+                  {categories
+                    .filter((c) => c !== 'All')
+                    .map((cat) => (
+                      <option key={cat} value={cat}>
+                        {cat}
+                      </option>
+                    ))}
+                  <option value="__NEW__">+ Create New Category...</option>
+                </select>
+              </div>
+
+              {targetMoveCategory === '__NEW__' && (
+                <div className="space-y-1 animate-in fade-in">
+                  <label className="text-slate-400 text-[11px]">Enter New Category Name:</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Bridal Zari Laces, Velvet Patches..."
+                    value={customMoveCategory}
+                    onChange={(e) => setCustomMoveCategory(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-900 border border-blue-500/60 rounded-xl text-white text-xs focus:outline-none focus:border-blue-400"
+                    autoFocus
+                  />
+                </div>
+              )}
+
+              {/* Scrollable Preview List */}
+              <div className="space-y-1">
+                <div className="text-slate-400 text-[11px] font-medium">Selected Products Preview:</div>
+                <div className="max-h-36 overflow-y-auto rounded-lg border border-slate-800 bg-slate-900/80 p-2 divide-y divide-slate-800/60 custom-scrollbar">
+                  {selectedProducts.slice(0, 15).map((p) => (
+                    <div key={p.id} className="py-1 flex items-center justify-between text-[11px]">
+                      <span className="font-semibold text-white truncate mr-2">{p.name}</span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 text-[10px]">
+                          {p.category}
+                        </span>
+                        <span className="text-slate-500">→</span>
+                        <span className="px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 font-bold text-[10px]">
+                          {targetMoveCategory === '__NEW__'
+                            ? customMoveCategory || 'New Category'
+                            : targetMoveCategory}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                  {selectedProducts.length > 15 && (
+                    <div className="py-1 text-center text-[10px] text-slate-500 italic">
+                      ...and {selectedProducts.length - 15} more items
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Safety Confirmation Checkbox */}
+            <label className="flex items-start gap-2.5 p-3 rounded-xl bg-blue-500/10 border border-blue-500/30 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={moveCategorySafetyConfirmed}
+                onChange={(e) => setMoveCategorySafetyConfirmed(e.target.checked)}
+                className="mt-0.5 rounded border-blue-500/50 bg-slate-900 text-blue-500 focus:ring-0 w-4 h-4 cursor-pointer"
+              />
+              <span className="text-xs text-blue-200/90 leading-snug">
+                I confirm reclassifying {selectedProductIds.length} product(s) into category "
+                {targetMoveCategory === '__NEW__' ? customMoveCategory || '...' : targetMoveCategory}".
+              </span>
+            </label>
+
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setIsMoveCategoryModalOpen(false)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmMoveCategory}
+                disabled={
+                  !moveCategorySafetyConfirmed ||
+                  (targetMoveCategory === '__NEW__' && !customMoveCategory.trim())
+                }
+                className={`px-5 py-2 rounded-xl text-xs font-bold shadow-lg transition ${
+                  moveCategorySafetyConfirmed &&
+                  (targetMoveCategory !== '__NEW__' || !!customMoveCategory.trim())
+                    ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-600/30 cursor-pointer'
+                    : 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                }`}
+              >
+                Confirm Move Category ({selectedProductIds.length})
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= BULK STOCK & PRICE UPDATE MODAL ================= */}
+      <BulkUpdateModal
+        isOpen={isBulkUpdateModalOpen}
+        onClose={() => setIsBulkUpdateModalOpen(false)}
+        selectedProducts={selectedProducts}
+        currentUser={currentUser}
+        onApply={handleApplyBulkUpdate}
+        onRemoveFromSelection={handleRemoveFromBulkSelection}
+      />
 
       {/* Global Batch Action Progress Loader */}
       <ActionLoaderModal

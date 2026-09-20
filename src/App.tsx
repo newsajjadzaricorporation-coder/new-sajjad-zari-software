@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   ShoppingBag,
   Package,
@@ -72,17 +72,44 @@ export default function App() {
     [validateAuthSession]
   );
 
-  // Theme Synchronizer
+  // Theme Synchronizer with Dynamic CSS Variable Injection & Contrast Attributes
   useEffect(() => {
     if (typeof document !== 'undefined') {
+      const root = document.documentElement;
+      root.setAttribute('data-theme', theme);
+
       if (theme === 'light') {
-        document.documentElement.classList.add('light-mode');
-        document.documentElement.classList.remove('dark');
+        root.classList.add('light-mode');
+        root.classList.remove('dark');
         document.body.classList.add('light-mode');
+
+        // Dynamic CSS Variable Injection for Light Mode
+        root.style.setProperty('--theme-bg', '#f8fafc');
+        root.style.setProperty('--theme-surface', '#ffffff');
+        root.style.setProperty('--theme-surface-subtle', '#f1f5f9');
+        root.style.setProperty('--theme-text', '#0f172a');
+        root.style.setProperty('--theme-text-muted', '#64748b');
+        root.style.setProperty('--theme-border', '#cbd5e1');
+        root.style.setProperty('--theme-input-bg', '#ffffff');
+        root.style.setProperty('--theme-input-border', '#94a3b8');
+        root.style.setProperty('--theme-input-text', '#0f172a');
+        root.style.setProperty('--theme-accent', '#f59e0b');
       } else {
-        document.documentElement.classList.remove('light-mode');
-        document.documentElement.classList.add('dark');
+        root.classList.remove('light-mode');
+        root.classList.add('dark');
         document.body.classList.remove('light-mode');
+
+        // Dynamic CSS Variable Injection for High-Contrast Dark Mode
+        root.style.setProperty('--theme-bg', '#020617');
+        root.style.setProperty('--theme-surface', '#0f172a');
+        root.style.setProperty('--theme-surface-subtle', '#0b1222');
+        root.style.setProperty('--theme-text', '#f8fafc');
+        root.style.setProperty('--theme-text-muted', '#94a3b8');
+        root.style.setProperty('--theme-border', '#334155');
+        root.style.setProperty('--theme-input-bg', '#0b1222');
+        root.style.setProperty('--theme-input-border', '#475569');
+        root.style.setProperty('--theme-input-text', '#f8fafc');
+        root.style.setProperty('--theme-accent', '#fbbf24');
       }
     }
   }, [theme]);
@@ -229,6 +256,47 @@ export default function App() {
     setIsLoginModalOpen(true);
   }, [currentUser]);
 
+  // Auto-Lock terminal on inactivity
+  const lastActivityRef = useRef<number>(Date.now());
+
+  useEffect(() => {
+    const handleActivity = () => {
+      lastActivityRef.current = Date.now();
+    };
+
+    window.addEventListener('mousemove', handleActivity, { passive: true });
+    window.addEventListener('mousedown', handleActivity, { passive: true });
+    window.addEventListener('keydown', handleActivity, { passive: true });
+    window.addEventListener('touchstart', handleActivity, { passive: true });
+    window.addEventListener('scroll', handleActivity, { passive: true });
+
+    return () => {
+      window.removeEventListener('mousemove', handleActivity);
+      window.removeEventListener('mousedown', handleActivity);
+      window.removeEventListener('keydown', handleActivity);
+      window.removeEventListener('touchstart', handleActivity);
+      window.removeEventListener('scroll', handleActivity);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!settings.autoLockEnabled || isLocked) return;
+
+    const timeoutMinutes = settings.autoLockMinutes && settings.autoLockMinutes > 0 ? settings.autoLockMinutes : 5;
+    const timeoutMs = timeoutMinutes * 60 * 1000;
+
+    const interval = setInterval(() => {
+      if (isLocked) return;
+      const inactiveDuration = Date.now() - lastActivityRef.current;
+      if (inactiveDuration >= timeoutMs) {
+        console.log(`[Auto-Lock] Terminal automatically locked after ${timeoutMinutes}m of inactivity.`);
+        handleLockTerminal();
+      }
+    }, 4000);
+
+    return () => clearInterval(interval);
+  }, [settings.autoLockEnabled, settings.autoLockMinutes, isLocked, handleLockTerminal]);
+
   const handleLoginSuccess = useCallback((user: UserProfile) => {
     setCurrentUser(user);
     setIsLocked(false);
@@ -240,10 +308,20 @@ export default function App() {
   const handleCompleteSale = useCallback((sale: SaleInvoice) => {
     OfflineDB.recordSale(sale, currentUser.email);
     reloadData();
-    // Automatically display the print receipt modal immediately
-    setPrintModalSale(sale);
-    setIsPrintModalOpen(true);
-  }, [currentUser.email, reloadData]);
+
+    // If Auto-Print on Sale is enabled, bypass confirmation dialog and automatically trigger print
+    const isAutoPrint = Boolean(settings.autoPrintOnSale || settings.autoPrintReceipt);
+    if (isAutoPrint) {
+      setTimeout(() => {
+        window.print();
+      }, 350);
+      setIsPrintModalOpen(false);
+    } else {
+      // Display the print receipt modal confirmation dialog
+      setPrintModalSale(sale);
+      setIsPrintModalOpen(true);
+    }
+  }, [currentUser.email, reloadData, settings.autoPrintOnSale, settings.autoPrintReceipt]);
 
   // Toggle Sound Effects
   const handleToggleSound = useCallback(() => {
@@ -283,14 +361,14 @@ export default function App() {
       />
 
       {/* Main Navigation Bar */}
-      <nav className="bg-slate-950/70 border-b border-slate-800 px-4 sm:px-6 lg:px-8 shrink-0 overflow-x-auto scrollbar-none">
-        <div className="max-w-7xl mx-auto flex items-center gap-1 sm:gap-2 h-12">
+      <nav className="bg-slate-950/90 border-b border-slate-700/80 px-4 sm:px-6 lg:px-8 shrink-0 overflow-x-auto scrollbar-none backdrop-blur-md shadow-sm">
+        <div className="max-w-7xl mx-auto flex items-center gap-1.5 sm:gap-2 h-12">
           <button
             onClick={() => handleNavClick('pos')}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap ${
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap cursor-pointer ${
               activeTab === 'pos'
-                ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+                ? 'nav-tab-active bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 font-extrabold shadow-lg shadow-amber-500/25 ring-2 ring-amber-300/80'
+                : 'nav-tab-inactive text-slate-200 hover:text-white hover:bg-slate-800/80 border border-slate-700/60'
             }`}
             title="Shortcuts: Ctrl+N"
           >
@@ -300,10 +378,10 @@ export default function App() {
 
           <button
             onClick={() => handleNavClick('inventory')}
-            className={`relative flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap ${
+            className={`relative flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap cursor-pointer ${
               activeTab === 'inventory'
-                ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+                ? 'nav-tab-active bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 font-extrabold shadow-lg shadow-amber-500/25 ring-2 ring-amber-300/80'
+                : 'nav-tab-inactive text-slate-200 hover:text-white hover:bg-slate-800/80 border border-slate-700/60'
             }`}
             title="Shortcuts: Ctrl+I"
           >
@@ -313,7 +391,7 @@ export default function App() {
               <span
                 className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-black leading-none ${
                   activeTab === 'inventory'
-                    ? 'bg-slate-950 text-amber-400 border border-slate-900'
+                    ? 'bg-slate-950 text-amber-300 border border-amber-400'
                     : 'bg-red-500 text-white animate-pulse'
                 }`}
                 title={`${lowStockCount} items below minimum stock threshold`}
@@ -325,10 +403,10 @@ export default function App() {
 
           <button
             onClick={() => handleNavClick('analytics')}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap ${
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap cursor-pointer ${
               activeTab === 'analytics'
-                ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+                ? 'nav-tab-active bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 font-extrabold shadow-lg shadow-amber-500/25 ring-2 ring-amber-300/80'
+                : 'nav-tab-inactive text-slate-200 hover:text-white hover:bg-slate-800/80 border border-slate-700/60'
             }`}
           >
             <TrendingUp className="w-4 h-4" />
@@ -337,10 +415,10 @@ export default function App() {
 
           <button
             onClick={() => handleNavClick('customers')}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap ${
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap cursor-pointer ${
               activeTab === 'customers'
-                ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+                ? 'nav-tab-active bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 font-extrabold shadow-lg shadow-amber-500/25 ring-2 ring-amber-300/80'
+                : 'nav-tab-inactive text-slate-200 hover:text-white hover:bg-slate-800/80 border border-slate-700/60'
             }`}
           >
             <Users className="w-4 h-4" />
@@ -349,10 +427,10 @@ export default function App() {
 
           <button
             onClick={() => handleNavClick('suppliers')}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap ${
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap cursor-pointer ${
               activeTab === 'suppliers'
-                ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+                ? 'nav-tab-active bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 font-extrabold shadow-lg shadow-amber-500/25 ring-2 ring-amber-300/80'
+                : 'nav-tab-inactive text-slate-200 hover:text-white hover:bg-slate-800/80 border border-slate-700/60'
             }`}
           >
             <Truck className="w-4 h-4" />
@@ -361,10 +439,10 @@ export default function App() {
 
           <button
             onClick={() => handleNavClick('returns')}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap ${
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap cursor-pointer ${
               activeTab === 'returns'
-                ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+                ? 'nav-tab-active bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 font-extrabold shadow-lg shadow-amber-500/25 ring-2 ring-amber-300/80'
+                : 'nav-tab-inactive text-slate-200 hover:text-white hover:bg-slate-800/80 border border-slate-700/60'
             }`}
           >
             <RotateCcw className="w-4 h-4" />
@@ -373,10 +451,10 @@ export default function App() {
 
           <button
             onClick={() => handleNavClick('expenses')}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap ${
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap cursor-pointer ${
               activeTab === 'expenses'
-                ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+                ? 'nav-tab-active bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 font-extrabold shadow-lg shadow-amber-500/25 ring-2 ring-amber-300/80'
+                : 'nav-tab-inactive text-slate-200 hover:text-white hover:bg-slate-800/80 border border-slate-700/60'
             }`}
           >
             <Coins className="w-4 h-4" />
@@ -385,10 +463,10 @@ export default function App() {
 
           <button
             onClick={() => handleNavClick('audit')}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap ${
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap cursor-pointer ${
               activeTab === 'audit'
-                ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+                ? 'nav-tab-active bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 font-extrabold shadow-lg shadow-amber-500/25 ring-2 ring-amber-300/80'
+                : 'nav-tab-inactive text-slate-200 hover:text-white hover:bg-slate-800/80 border border-slate-700/60'
             }`}
           >
             <Shield className="w-4 h-4" />
@@ -397,10 +475,10 @@ export default function App() {
 
           <button
             onClick={() => handleNavClick('guide')}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap ${
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-bold transition whitespace-nowrap cursor-pointer ${
               activeTab === 'guide'
-                ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+                ? 'nav-tab-active bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 font-extrabold shadow-lg shadow-amber-500/25 ring-2 ring-amber-300/80'
+                : 'nav-tab-inactive text-slate-200 hover:text-white hover:bg-slate-800/80 border border-slate-700/60'
             }`}
           >
             <HelpCircle className="w-4 h-4" />
@@ -422,10 +500,14 @@ export default function App() {
                 sales={sales}
                 settings={settings}
                 currentUser={currentUser}
+                customers={customers}
+                suppliers={suppliers}
                 onNavigateToInventoryLowStock={() => setActiveTab('inventory')}
                 onNavigateToPOS={() => setActiveTab('pos')}
                 onNavigateToClosing={() => setActiveTab('expenses')}
                 onNavigateToAnalytics={() => setActiveTab('analytics')}
+                onNavigateToCustomers={() => setActiveTab('customers')}
+                onNavigateToSuppliers={() => setActiveTab('suppliers')}
               />
               <div className="flex-1 flex flex-col min-h-[600px]">
                 <POSModule

@@ -126,8 +126,8 @@ export const SupplierPriceHistoryView: React.FC<SupplierPriceHistoryViewProps> =
     const map: { [productId: string]: ProductPurchaseRecord[] } = {};
 
     // Flatten all purchase items with purchase metadata
-    purchases.forEach((po) => {
-      po.items.forEach((item) => {
+    (purchases || []).forEach((po) => {
+      (po.items || []).forEach((item) => {
         const prodId = item.productId;
         if (!map[prodId]) map[prodId] = [];
 

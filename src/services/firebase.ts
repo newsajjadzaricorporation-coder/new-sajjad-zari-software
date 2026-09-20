@@ -107,7 +107,7 @@ try {
 
     const dbId = (rawFirebaseConfig as any).firestoreDatabaseId;
 
-    // Configure Firestore with persistent local cache, multi-tab manager and long polling
+    // Configure Firestore with persistent local cache and multi-tab manager
     try {
       const cacheSetting = persistentLocalCache({
         tabManager: persistentMultipleTabManager(),
@@ -115,8 +115,6 @@ try {
 
       const firestoreSettings = {
         localCache: cacheSetting,
-        experimentalForceLongPolling: true,
-        experimentalAutoDetectLongPolling: true,
       };
 
       if (dbId) {
@@ -125,11 +123,9 @@ try {
         db = initializeFirestore(app, firestoreSettings);
       }
     } catch (cacheErr) {
-      console.warn('Persistent cache initialization fallback to memoryLocalCache:', cacheErr);
       try {
         const memorySettings = {
           localCache: memoryLocalCache(),
-          experimentalForceLongPolling: true,
         };
         db = dbId ? initializeFirestore(app, memorySettings, dbId) : initializeFirestore(app, memorySettings);
       } catch {

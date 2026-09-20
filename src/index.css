@@ -35,6 +35,125 @@
   will-change: opacity, transform;
 }
 
+/* ==========================================================================
+   HIGH-CONTRAST DARK MODE PALETTE FOR LOW-LIGHT STORE ENVIRONMENTS
+   Optimized for high readability in dim retail counters & glare-prone POS screens
+   ========================================================================== */
+
+/* High-Contrast Input Fields, Selects & Textareas in Dark Mode */
+html:not(.light-mode) input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"]),
+html:not(.light-mode) select,
+html:not(.light-mode) textarea,
+body:not(.light-mode) input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"]),
+body:not(.light-mode) select,
+body:not(.light-mode) textarea {
+  border-color: #475569 !important; /* Slate-600: strong border visibility against dark panels */
+  background-color: #0b1222 !important; /* Deep solid slate background with high luminance contrast */
+  color: #f8fafc !important; /* Slate-50: highest-contrast readable text */
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+
+html:not(.light-mode) input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"])::placeholder,
+html:not(.light-mode) textarea::placeholder,
+body:not(.light-mode) input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"])::placeholder,
+body:not(.light-mode) textarea::placeholder {
+  color: #94a3b8 !important; /* Slate-400: clear, readable hints & placeholders in low light */
+  opacity: 0.95;
+}
+
+html:not(.light-mode) input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"]):hover,
+html:not(.light-mode) select:hover,
+html:not(.light-mode) textarea:hover,
+body:not(.light-mode) input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"]):hover,
+body:not(.light-mode) select:hover,
+body:not(.light-mode) textarea:hover {
+  border-color: #64748b !important; /* Slate-500: reactive hover state */
+  background-color: #0e172a !important;
+}
+
+html:not(.light-mode) input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"]):focus,
+html:not(.light-mode) select:focus,
+html:not(.light-mode) textarea:focus,
+body:not(.light-mode) input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"]):focus,
+body:not(.light-mode) select:focus,
+body:not(.light-mode) textarea:focus {
+  border-color: #f59e0b !important; /* High-Visibility Amber-500 */
+  background-color: #080e1b !important;
+  box-shadow: 0 0 0 2.5px rgba(245, 158, 11, 0.45), 0 0 14px rgba(245, 158, 11, 0.25) !important;
+  outline: none !important;
+  color: #ffffff !important;
+}
+
+/* High-contrast options inside dark mode select dropdowns */
+html:not(.light-mode) select option,
+body:not(.light-mode) select option {
+  background-color: #0f172a !important;
+  color: #f8fafc !important;
+  padding: 8px 12px;
+}
+
+/* High-contrast disabled / readonly fields */
+html:not(.light-mode) input:disabled,
+html:not(.light-mode) select:disabled,
+html:not(.light-mode) textarea:disabled,
+html:not(.light-mode) input[readonly],
+body:not(.light-mode) input:disabled,
+body:not(.light-mode) select:disabled,
+body:not(.light-mode) textarea:disabled,
+body:not(.light-mode) input[readonly] {
+  background-color: #080d1a !important;
+  border-color: #334155 !important;
+  color: #94a3b8 !important;
+  cursor: not-allowed;
+}
+
+/* High-contrast active and inactive navigation tabs */
+html:not(.light-mode) .nav-tab-active,
+body:not(.light-mode) .nav-tab-active {
+  background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 50%, #d97706 100%) !important;
+  color: #020617 !important;
+  font-weight: 800 !important;
+  border: 1px solid #fef08a !important;
+  box-shadow: 0 4px 14px -1px rgba(245, 158, 11, 0.45), 0 0 0 1px rgba(254, 240, 138, 0.4) !important;
+  letter-spacing: 0.01em;
+}
+
+html:not(.light-mode) .nav-tab-inactive,
+body:not(.light-mode) .nav-tab-inactive {
+  color: #cbd5e1 !important; /* Slate-300: prominently visible in dim ambient lighting */
+  background-color: rgba(15, 23, 42, 0.7) !important;
+  border: 1px solid rgba(71, 85, 105, 0.7) !important;
+}
+
+html:not(.light-mode) .nav-tab-inactive:hover,
+body:not(.light-mode) .nav-tab-inactive:hover {
+  color: #ffffff !important;
+  background-color: rgba(30, 41, 59, 0.9) !important;
+  border-color: #94a3b8 !important;
+}
+
+/* Light mode nav tab overrides */
+.light-mode .nav-tab-active {
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%) !important;
+  color: #ffffff !important;
+  font-weight: 800 !important;
+  border: 1px solid #b45309 !important;
+  box-shadow: 0 4px 12px -2px rgba(217, 119, 6, 0.35) !important;
+}
+
+.light-mode .nav-tab-inactive {
+  color: #334155 !important;
+  background-color: #f1f5f9 !important;
+  border: 1px solid #cbd5e1 !important;
+}
+
+.light-mode .nav-tab-inactive:hover {
+  color: #0f172a !important;
+  background-color: #e2e8f0 !important;
+  border-color: #94a3b8 !important;
+}
+
 /* Custom Sleek Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;

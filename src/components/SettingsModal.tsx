@@ -14,9 +14,13 @@ import {
   Coins,
   ShieldCheck,
   Target,
+  Lock,
+  Clock,
+  Zap,
 } from 'lucide-react';
 import { ShopSettings, UserProfile } from '../types';
 import { OfflineDB } from '../services/db';
+import { ESCPOSPrinter } from '../utils/escpos';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -36,16 +40,47 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [formData, setFormData] = useState<ShopSettings>({
     ...initialSettings,
     address: initialSettings.address || '',
+    autoPrintOnSale: initialSettings.autoPrintOnSale ?? initialSettings.autoPrintReceipt ?? false,
+    autoPrintReceipt: initialSettings.autoPrintOnSale ?? initialSettings.autoPrintReceipt ?? false,
+    dailyRevenueTarget: initialSettings.dailyRevenueTarget ?? initialSettings.dailySalesGoal ?? 75000,
+    dailySalesGoal: initialSettings.dailyRevenueTarget ?? initialSettings.dailySalesGoal ?? 75000,
+    autoLockEnabled: initialSettings.autoLockEnabled ?? false,
+    autoLockMinutes: initialSettings.autoLockMinutes ?? 5,
   });
   const [savedSuccess, setSavedSuccess] = useState(false);
-  const [activeSection, setActiveSection] = useState<'general' | 'print' | 'sales' | 'loyalty'>('general');
+  const [activeSection, setActiveSection] = useState<'general' | 'print' | 'sales' | 'loyalty' | 'security'>('general');
+  const [testPrintStatus, setTestPrintStatus] = useState<{ isTesting: boolean; message: string | null; success?: boolean }>({
+    isTesting: false,
+    message: null,
+  });
 
   if (!isOpen) return null;
 
+  const handleTestPrint = () => {
+    setTestPrintStatus({ isTesting: true, message: 'Dispatching diagnostic test slip to thermal printer...' });
+    const result = ESCPOSPrinter.triggerTestPrint(formData);
+    setTimeout(() => {
+      setTestPrintStatus({
+        isTesting: false,
+        message: result.message,
+        success: result.success,
+      });
+      setTimeout(() => {
+        setTestPrintStatus((prev) => ({ ...prev, message: null }));
+      }, 5000);
+    }, 800);
+  };
+
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
-    OfflineDB.saveSettings(formData);
-    onSaveSettings(formData);
+    const cleanData: ShopSettings = {
+      ...formData,
+      dailySalesGoal: formData.dailyRevenueTarget || formData.dailySalesGoal,
+      dailyRevenueTarget: formData.dailyRevenueTarget || formData.dailySalesGoal,
+      autoPrintReceipt: formData.autoPrintOnSale,
+    };
+    OfflineDB.saveSettings(cleanData);
+    onSaveSettings(cleanData);
     setSavedSuccess(true);
     setTimeout(() => {
       setSavedSuccess(false);
@@ -70,7 +105,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 Shop Settings & POS Preferences
               </h2>
               <p className="text-xs text-slate-400">
-                Configure shop branding, physical address for receipts, printing templates, and operational targets
+                Configure shop branding, physical address for receipts, printing templates, auto-print, security lock, and operational targets
               </p>
             </div>
           </div>
@@ -83,11 +118,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
 
         {/* Tab Navigation */}
-        <div className="flex border-b border-slate-800 px-6 bg-slate-950/30 gap-2 pt-2">
+        <div className="flex border-b border-slate-800 px-6 bg-slate-950/30 gap-2 pt-2 overflow-x-auto">
           <button
             type="button"
             onClick={() => setActiveSection('general')}
-            className={`px-4 py-2.5 text-xs font-semibold rounded-t-lg transition border-b-2 flex items-center gap-2 ${
+            className={`px-3.5 py-2.5 text-xs font-semibold rounded-t-lg transition border-b-2 flex items-center gap-2 whitespace-nowrap ${
               activeSection === 'general'
                 ? 'border-amber-400 text-amber-400 bg-slate-850'
                 : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
@@ -99,7 +134,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           <button
             type="button"
             onClick={() => setActiveSection('print')}
-            className={`px-4 py-2.5 text-xs font-semibold rounded-t-lg transition border-b-2 flex items-center gap-2 ${
+            className={`px-3.5 py-2.5 text-xs font-semibold rounded-t-lg transition border-b-2 flex items-center gap-2 whitespace-nowrap ${
               activeSection === 'print'
                 ? 'border-amber-400 text-amber-400 bg-slate-850'
                 : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
@@ -111,19 +146,31 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           <button
             type="button"
             onClick={() => setActiveSection('sales')}
-            className={`px-4 py-2.5 text-xs font-semibold rounded-t-lg transition border-b-2 flex items-center gap-2 ${
+            className={`px-3.5 py-2.5 text-xs font-semibold rounded-t-lg transition border-b-2 flex items-center gap-2 whitespace-nowrap ${
               activeSection === 'sales'
                 ? 'border-amber-400 text-amber-400 bg-slate-850'
                 : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
             }`}
           >
             <Target className="w-3.5 h-3.5" />
-            Sales Goals & Fees
+            Sales Target & Fees
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveSection('security')}
+            className={`px-3.5 py-2.5 text-xs font-semibold rounded-t-lg transition border-b-2 flex items-center gap-2 whitespace-nowrap ${
+              activeSection === 'security'
+                ? 'border-amber-400 text-amber-400 bg-slate-850'
+                : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+            }`}
+          >
+            <Lock className="w-3.5 h-3.5" />
+            Auto-Lock & Security
           </button>
           <button
             type="button"
             onClick={() => setActiveSection('loyalty')}
-            className={`px-4 py-2.5 text-xs font-semibold rounded-t-lg transition border-b-2 flex items-center gap-2 ${
+            className={`px-3.5 py-2.5 text-xs font-semibold rounded-t-lg transition border-b-2 flex items-center gap-2 whitespace-nowrap ${
               activeSection === 'loyalty'
                 ? 'border-amber-400 text-amber-400 bg-slate-850'
                 : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
@@ -222,6 +269,74 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           {activeSection === 'print' && (
             <div className="space-y-4">
+              {/* Auto-Print on Sale Global Toggle */}
+              <div className="p-4 bg-slate-800/90 rounded-xl border border-slate-700 flex items-center justify-between gap-4 shadow-sm">
+                <div className="space-y-1">
+                  <div className="text-sm font-bold text-white flex items-center gap-2">
+                    <Zap className="w-4 h-4 text-amber-400" />
+                    <span>Auto-Print on Sale (فوری پرنٹ)</span>
+                    <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/20">
+                      High Speed POS
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-300">
+                    Bypass the print confirmation dialog and automatically trigger print jobs for faster checkout experiences.
+                  </p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={formData.autoPrintOnSale ?? false}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        autoPrintOnSale: e.target.checked,
+                        autoPrintReceipt: e.target.checked,
+                      })
+                    }
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500"></div>
+                </label>
+              </div>
+
+              {/* Diagnostic Test Print Action Box */}
+              <div className="p-4 bg-slate-800/60 rounded-xl border border-slate-700/80 space-y-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="space-y-0.5">
+                    <div className="text-sm font-bold text-white flex items-center gap-2">
+                      <Printer className="w-4 h-4 text-emerald-400" />
+                      <span>Thermal Printer Diagnostic Test</span>
+                    </div>
+                    <p className="text-xs text-slate-400">
+                      Send a test print request to the thermal printer to ensure connectivity, font rendering, and paper feed motor are working before a busy shift.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleTestPrint}
+                    disabled={testPrintStatus.isTesting}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-2 shrink-0 shadow-lg shadow-emerald-600/20 cursor-pointer"
+                  >
+                    <Printer className={`w-4 h-4 ${testPrintStatus.isTesting ? 'animate-bounce' : ''}`} />
+                    <span>{testPrintStatus.isTesting ? 'Sending Test...' : 'Test Print (آزمائشی پرنٹ)'}</span>
+                  </button>
+                </div>
+
+                {testPrintStatus.message && (
+                  <div
+                    className={`p-2.5 rounded-lg text-xs font-medium flex items-center gap-2 animate-in fade-in duration-150 ${
+                      testPrintStatus.success === false
+                        ? 'bg-amber-500/15 border border-amber-500/30 text-amber-300'
+                        : 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-300'
+                    }`}
+                  >
+                    <CheckCircle2 className="w-4 h-4 shrink-0" />
+                    <span>{testPrintStatus.message}</span>
+                  </div>
+                )}
+              </div>
+
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-2">
                   Default Printer & Receipt Layout
@@ -300,21 +415,51 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <div className="p-4 bg-slate-800 rounded-xl border border-slate-700">
                   <label className="block text-xs font-bold text-slate-200 mb-1 flex items-center gap-1.5">
                     <Target className="w-4 h-4 text-emerald-400" />
-                    Daily Sales Revenue Goal (Rs)
+                    Daily Revenue Target (Rs) / یومیہ ہدف
                   </label>
                   <p className="text-[11px] text-slate-400 mb-2">
-                    Used to render the progress meter on POS and dashboard
+                    Configurable daily sales benchmark used by the QuickStatsDashboard progress meter and POS status bar.
                   </p>
-                  <div className="relative">
+                  <div className="relative mb-2">
                     <span className="absolute left-3 top-2.5 text-xs font-bold text-amber-400">Rs</span>
                     <input
                       type="number"
-                      min={0}
-                      step={1000}
-                      value={formData.dailySalesGoal ?? 75000}
-                      onChange={(e) => setFormData({ ...formData, dailySalesGoal: parseFloat(e.target.value) || 0 })}
+                      min={1000}
+                      step={5000}
+                      value={formData.dailyRevenueTarget ?? formData.dailySalesGoal ?? 75000}
+                      onChange={(e) => {
+                        const val = parseFloat(e.target.value) || 0;
+                        setFormData({
+                          ...formData,
+                          dailyRevenueTarget: val,
+                          dailySalesGoal: val,
+                        });
+                      }}
                       className="w-full pl-9 pr-3 py-2 bg-slate-900 border border-slate-700 rounded-xl text-sm font-bold text-white focus:border-amber-400 focus:outline-none"
                     />
+                  </div>
+                  {/* Quick Preset Buttons */}
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {[50000, 75000, 100000, 150000, 200000].map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() =>
+                          setFormData({
+                            ...formData,
+                            dailyRevenueTarget: preset,
+                            dailySalesGoal: preset,
+                          })
+                        }
+                        className={`px-2 py-1 rounded-lg text-[10px] font-bold transition ${
+                          (formData.dailyRevenueTarget ?? formData.dailySalesGoal) === preset
+                            ? 'bg-amber-500 text-slate-950'
+                            : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-700'
+                        }`}
+                      >
+                        Rs {(preset / 1000)}k
+                      </button>
+                    ))}
                   </div>
                 </div>
 
@@ -345,6 +490,70 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </div>
                 </div>
               </div>
+            </div>
+          )}
+
+          {activeSection === 'security' && (
+            <div className="space-y-4">
+              <div className="p-4 bg-slate-800 rounded-xl border border-slate-700 flex items-center justify-between gap-4">
+                <div className="space-y-0.5">
+                  <div className="text-sm font-bold text-white flex items-center gap-2">
+                    <Lock className="w-4 h-4 text-amber-400" />
+                    <span>Auto-Lock Terminal on Inactivity (خودکار لاک)</span>
+                  </div>
+                  <p className="text-xs text-slate-300">
+                    Triggers the terminal lock screen after a user-defined period of inactivity to improve security compliance.
+                  </p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={formData.autoLockEnabled ?? false}
+                    onChange={(e) => setFormData({ ...formData, autoLockEnabled: e.target.checked })}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500"></div>
+                </label>
+              </div>
+
+              {formData.autoLockEnabled && (
+                <div className="p-4 bg-slate-800/80 rounded-xl border border-slate-700 space-y-3 animate-in fade-in duration-200">
+                  <label className="block text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                    <Clock className="w-4 h-4 text-amber-400" />
+                    Inactivity Timeout Period (منٹ)
+                  </label>
+                  <p className="text-xs text-slate-400">
+                    Terminal will lock and require authentication if no user clicks, keypresses, or touch inputs occur during this time:
+                  </p>
+                  <div className="grid grid-cols-2 sm:grid-cols-6 gap-2">
+                    {[
+                      { minutes: 1, label: '1 min' },
+                      { minutes: 2, label: '2 mins' },
+                      { minutes: 5, label: '5 mins (Recommended)' },
+                      { minutes: 10, label: '10 mins' },
+                      { minutes: 15, label: '15 mins' },
+                      { minutes: 30, label: '30 mins' },
+                    ].map((opt) => (
+                      <button
+                        key={opt.minutes}
+                        type="button"
+                        onClick={() => setFormData({ ...formData, autoLockMinutes: opt.minutes })}
+                        className={`p-2.5 rounded-xl border text-center transition font-bold text-xs ${
+                          (formData.autoLockMinutes ?? 5) === opt.minutes
+                            ? 'bg-amber-500/20 border-amber-400 text-amber-300 shadow-sm'
+                            : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-600'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="text-[11px] text-slate-500 flex items-center gap-1.5 pt-1">
+                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>Protects sensitive wholesale margins, ledger balances, and cash closing records from unauthorized view.</span>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

@@ -216,13 +216,13 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
             setFirestoreStatus('connected');
             setLastSyncTime(new Date());
           } else {
-            console.warn('[AppProvider] Firestore operating in high-speed offline persistentLocalCache mode.');
+            console.info('[AppProvider] Firestore operating in high-speed offline persistentLocalCache mode.');
             setFirestoreStatus('offline_cache');
             setLastSyncTime(new Date());
           }
         } catch (dbErr: any) {
           const errCode = dbErr?.code || 'UNKNOWN_CACHE_ERR';
-          console.warn(`[AppProvider] Warning: persistentLocalCache test warning [Code: ${errCode}]:`, dbErr);
+          console.info(`[AppProvider] Operating in persistentLocalCache mode [Code: ${errCode}]:`, dbErr?.message || dbErr);
           setFirestoreStatus('offline_cache');
           setLastSyncTime(new Date());
         }

@@ -49,9 +49,19 @@ interface SupplierKhataModuleProps {
   onRefreshData: () => void;
 }
 
+const getSupplierName = (s?: Partial<Supplier> | null): string => {
+  if (!s) return 'Unknown Supplier';
+  return s.companyName || s.name || s.company || s.contactPerson || 'Unknown Supplier';
+};
+
+const getSupplierCategory = (s?: Partial<Supplier> | null): string => {
+  if (!s) return 'General';
+  return s.category || s.categorySupplied || 'General';
+};
+
 const SupplierKhataModuleComponent: React.FC<SupplierKhataModuleProps> = ({
-  suppliers,
-  products,
+  suppliers = [],
+  products = [],
   currentUser,
   onRefreshData,
 }) => {
@@ -133,7 +143,7 @@ const SupplierKhataModuleComponent: React.FC<SupplierKhataModuleProps> = ({
     suppliers.forEach((s) => {
       map.set(s.id, {
         supplierId: s.id,
-        name: s.companyName,
+        name: getSupplierName(s),
         totalSpent: 0,
         orderCount: 0,
         payable: s.balancePayable || 0,
@@ -143,8 +153,9 @@ const SupplierKhataModuleComponent: React.FC<SupplierKhataModuleProps> = ({
     recentPurchases.forEach((p) => {
       let entry = map.get(p.supplierId);
       if (!entry) {
+        const pSupName = (p.supplierName || '').toLowerCase().trim();
         const found = suppliers.find(
-          (s) => s.companyName.toLowerCase() === p.supplierName.toLowerCase()
+          (s) => getSupplierName(s).toLowerCase().trim() === pSupName
         );
         if (found) entry = map.get(found.id);
       }
@@ -153,9 +164,10 @@ const SupplierKhataModuleComponent: React.FC<SupplierKhataModuleProps> = ({
         entry.totalSpent += p.totalAmount || 0;
         entry.orderCount += 1;
       } else {
-        map.set(p.supplierId || p.supplierName, {
-          supplierId: p.supplierId || p.supplierName,
-          name: p.supplierName,
+        const vendorName = p.supplierName || 'Unknown Vendor';
+        map.set(p.supplierId || vendorName, {
+          supplierId: p.supplierId || vendorName,
+          name: vendorName,
           totalSpent: p.totalAmount || 0,
           orderCount: 1,
           payable: 0,
@@ -169,12 +181,15 @@ const SupplierKhataModuleComponent: React.FC<SupplierKhataModuleProps> = ({
     const total30DaySpend = list.reduce((sum, i) => sum + i.totalSpent, 0);
     const activeVendorsCount = list.filter((i) => i.totalSpent > 0).length;
 
-    const chartData = list.map((item, idx) => ({
-      ...item,
-      displayName: item.name.length > 15 ? `${item.name.slice(0, 13)}…` : item.name,
-      percentage: total30DaySpend > 0 ? ((item.totalSpent / total30DaySpend) * 100).toFixed(1) : '0',
-      colorIndex: idx,
-    }));
+    const chartData = list.map((item, idx) => {
+      const rawName = item.name || 'Vendor';
+      return {
+        ...item,
+        displayName: rawName.length > 15 ? `${rawName.slice(0, 13)}…` : rawName,
+        percentage: total30DaySpend > 0 ? ((item.totalSpent / total30DaySpend) * 100).toFixed(1) : '0',
+        colorIndex: idx,
+      };
+    });
 
     const topVendor = chartData[0]?.totalSpent > 0 ? chartData[0] : null;
 
@@ -193,9 +208,9 @@ const SupplierKhataModuleComponent: React.FC<SupplierKhataModuleProps> = ({
     if (!q) return suppliers;
     const cleanQ = q.replace(/[^0-9a-z]/gi, '');
     return suppliers.filter((s) => {
-      const companyMatch = s.companyName.toLowerCase().includes(q);
+      const companyMatch = getSupplierName(s).toLowerCase().includes(q);
       const personMatch = Boolean(s.contactPerson && s.contactPerson.toLowerCase().includes(q));
-      const categoryMatch = Boolean(s.category && s.category.toLowerCase().includes(q));
+      const categoryMatch = Boolean(getSupplierCategory(s).toLowerCase().includes(q));
       const addressMatch = Boolean(s.address && s.address.toLowerCase().includes(q));
 
       // Exact & normalized phone matching (e.g. 0300123 matches 0300-1234567 or +92 300 1234567)
@@ -218,9 +233,9 @@ const SupplierKhataModuleComponent: React.FC<SupplierKhataModuleProps> = ({
     return purchases.filter(
       (p) =>
         !q ||
-        p.purchaseNo.toLowerCase().includes(q) ||
-        p.supplierName.toLowerCase().includes(q) ||
-        p.date.includes(q) ||
+        (p.purchaseNo && p.purchaseNo.toLowerCase().includes(q)) ||
+        (p.supplierName && p.supplierName.toLowerCase().includes(q)) ||
+        (p.date && p.date.includes(q)) ||
         (p.notes && p.notes.toLowerCase().includes(q))
     );
   }, [purchases, searchQuery]);
@@ -267,10 +282,10 @@ const SupplierKhataModuleComponent: React.FC<SupplierKhataModuleProps> = ({
 
     const rows = toExport.map((s) => [
       s.id,
-      s.companyName,
+      getSupplierName(s),
       s.contactPerson || '',
       s.phone || '',
-      s.category || '',
+      getSupplierCategory(s),
       s.balancePayable || 0,
       s.totalPurchased || 0,
       s.totalPaid || 0,
@@ -324,12 +339,12 @@ const SupplierKhataModuleComponent: React.FC<SupplierKhataModuleProps> = ({
     ];
 
     const rows = toExport.map((p) => [
-      p.purchaseNo,
-      p.date,
-      p.supplierName,
-      p.totalAmount,
-      p.paymentMethod,
-      p.items.length,
+      p.purchaseNo || 'PUR-ORD',
+      p.date || '',
+      p.supplierName || 'Unknown Vendor',
+      p.totalAmount || 0,
+      p.paymentMethod || 'cash',
+      (p.items || []).length,
       p.receivedBy || '',
       p.notes || '',
     ]);
@@ -389,23 +404,24 @@ const SupplierKhataModuleComponent: React.FC<SupplierKhataModuleProps> = ({
     if (!supplier) return;
 
     const itemsMapped = purchaseItems.map((row) => {
-      const prod = products.find((p) => p.id === row.productId)!;
+      const prod = products.find((p) => p.id === row.productId);
       return {
-        productId: prod.id,
-        productName: prod.name,
-        quantity: Number(row.quantity),
-        costPrice: Number(row.costPrice),
-        totalCost: Number(row.quantity) * Number(row.costPrice),
+        productId: row.productId,
+        productName: prod ? prod.name : 'Product',
+        quantity: Number(row.quantity) || 1,
+        costPrice: Number(row.costPrice) || 0,
+        totalCost: (Number(row.quantity) || 1) * (Number(row.costPrice) || 0),
       };
     });
 
+    const supplierDisplayName = getSupplierName(supplier);
     const purchaseOrder: PurchaseOrder = {
       id: `pur-${Date.now()}`,
       purchaseNo: `PUR-${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, '0')}-${Math.floor(
         1000 + Math.random() * 9000
       )}`,
       supplierId: supplier.id,
-      supplierName: supplier.companyName,
+      supplierName: supplierDisplayName,
       date: new Date().toLocaleDateString(),
       timestamp: Date.now(),
       items: itemsMapped,
@@ -437,7 +453,11 @@ const SupplierKhataModuleComponent: React.FC<SupplierKhataModuleProps> = ({
   };
 
   const openEditSupplier = (sup: Supplier) => {
-    setEditingSupplier({ ...sup });
+    setEditingSupplier({
+      ...sup,
+      companyName: getSupplierName(sup),
+      category: getSupplierCategory(sup),
+    });
     setIsSupplierModalOpen(true);
   };
 
@@ -445,12 +465,18 @@ const SupplierKhataModuleComponent: React.FC<SupplierKhataModuleProps> = ({
     e.preventDefault();
     if (!editingSupplier || !editingSupplier.companyName || !editingSupplier.phone) return;
 
+    const compName = editingSupplier.companyName.trim();
+    const cat = (editingSupplier.category || 'General').trim();
+
     const fullSup: Supplier = {
       id: editingSupplier.id || `sup-${Date.now()}`,
-      companyName: editingSupplier.companyName,
+      name: compName,
+      company: compName,
+      companyName: compName,
       contactPerson: editingSupplier.contactPerson || '',
       phone: editingSupplier.phone,
-      category: editingSupplier.category || 'General',
+      category: cat,
+      categorySupplied: cat,
       balancePayable: Number(editingSupplier.balancePayable) || 0,
       totalPurchased: Number(editingSupplier.totalPurchased) || 0,
       totalPaid: Number(editingSupplier.totalPaid) || 0,
@@ -492,12 +518,13 @@ const SupplierKhataModuleComponent: React.FC<SupplierKhataModuleProps> = ({
       balancePayable: Math.max(0, (paymentSupplier.balancePayable || 0) - amount),
     };
 
+    const supDisplayName = getSupplierName(paymentSupplier);
     OfflineDB.saveSupplier(updatedSup);
     OfflineDB.addAuditLog({
       userEmail: currentUser.email,
       actionType: 'EXPENSE_CREATE',
-      entityId: paymentSupplier.companyName,
-      details: `Paid Rs ${amount.toLocaleString()} to supplier "${paymentSupplier.companyName}" via ${paymentMethod}. New Balance: Rs ${updatedSup.balancePayable}`,
+      entityId: supDisplayName,
+      details: `Paid Rs ${amount.toLocaleString()} to supplier "${supDisplayName}" via ${paymentMethod}. New Balance: Rs ${updatedSup.balancePayable}`,
     });
 
     setPaymentSupplier(null);
@@ -742,14 +769,14 @@ const SupplierKhataModuleComponent: React.FC<SupplierKhataModuleProps> = ({
 
       {/* Section Navigation Tabs & Search */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
-        <div className="flex flex-wrap bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs gap-1">
+        <div className="flex flex-wrap bg-slate-950/90 p-1.5 rounded-xl border border-slate-700/80 text-xs gap-1.5 shadow-sm">
           <button
             type="button"
             onClick={() => setActiveTab('suppliers')}
             className={`flex items-center gap-2 px-3.5 py-2 rounded-lg font-bold transition cursor-pointer ${
               activeTab === 'suppliers'
-                ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
-                : 'text-slate-400 hover:text-white'
+                ? 'nav-tab-active bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 font-extrabold shadow-lg shadow-amber-500/25 ring-2 ring-amber-300/80'
+                : 'nav-tab-inactive text-slate-200 hover:text-white hover:bg-slate-800/80 border border-slate-700/60'
             }`}
           >
             <Building className="w-4 h-4" />
@@ -760,8 +787,8 @@ const SupplierKhataModuleComponent: React.FC<SupplierKhataModuleProps> = ({
             onClick={() => setActiveTab('purchases')}
             className={`flex items-center gap-2 px-3.5 py-2 rounded-lg font-bold transition cursor-pointer ${
               activeTab === 'purchases'
-                ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
-                : 'text-slate-400 hover:text-white'
+                ? 'nav-tab-active bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 font-extrabold shadow-lg shadow-amber-500/25 ring-2 ring-amber-300/80'
+                : 'nav-tab-inactive text-slate-200 hover:text-white hover:bg-slate-800/80 border border-slate-700/60'
             }`}
           >
             <FileText className="w-4 h-4" />
@@ -772,8 +799,8 @@ const SupplierKhataModuleComponent: React.FC<SupplierKhataModuleProps> = ({
             onClick={() => setActiveTab('price_history')}
             className={`flex items-center gap-2 px-3.5 py-2 rounded-lg font-bold transition cursor-pointer ${
               activeTab === 'price_history'
-                ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
-                : 'text-slate-400 hover:text-white'
+                ? 'nav-tab-active bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 font-extrabold shadow-lg shadow-amber-500/25 ring-2 ring-amber-300/80'
+                : 'nav-tab-inactive text-slate-200 hover:text-white hover:bg-slate-800/80 border border-slate-700/60'
             }`}
           >
             <TrendingUp className="w-4 h-4" />
@@ -919,7 +946,7 @@ const SupplierKhataModuleComponent: React.FC<SupplierKhataModuleProps> = ({
                         <td className="p-3.5 font-bold text-white flex items-center gap-2">
                           <Building className="w-4 h-4 text-amber-400" />
                           <div>
-                            <div>{sup.companyName}</div>
+                            <div>{getSupplierName(sup)}</div>
                             <div className="text-[10px] text-slate-500 font-normal">ID: #{sup.id}</div>
                           </div>
                         </td>
@@ -927,7 +954,7 @@ const SupplierKhataModuleComponent: React.FC<SupplierKhataModuleProps> = ({
                         <td className="p-3.5 text-slate-400 font-mono">{sup.phone}</td>
                         <td className="p-3.5 text-slate-400">
                           <span className="px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 text-[11px]">
-                            {sup.category || 'General'}
+                            {getSupplierCategory(sup)}
                           </span>
                         </td>
                         <td className="p-3.5 text-right font-mono font-bold text-red-400">
@@ -1362,7 +1389,7 @@ const SupplierKhataModuleComponent: React.FC<SupplierKhataModuleProps> = ({
                   >
                     {suppliers.map((s) => (
                       <option key={s.id} value={s.id}>
-                        {s.companyName} - Bal: Rs {s.balancePayable || 0}
+                        {getSupplierName(s)} - Bal: Rs {s.balancePayable || 0}
                       </option>
                     ))}
                   </select>

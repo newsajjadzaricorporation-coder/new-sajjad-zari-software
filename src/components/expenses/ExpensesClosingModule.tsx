@@ -186,19 +186,23 @@ const ExpensesClosingModuleComponent: React.FC<ExpensesClosingModuleProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
+          <div className="flex bg-slate-950/90 p-1.5 rounded-xl border border-slate-700/80 text-xs gap-1.5 shadow-sm">
             <button
               onClick={() => setActiveTab('expenses')}
-              className={`px-4 py-2 rounded-lg font-bold transition ${
-                activeTab === 'expenses' ? 'bg-amber-500 text-slate-950 shadow' : 'text-slate-400 hover:text-white'
+              className={`px-4 py-2 rounded-lg font-bold transition cursor-pointer ${
+                activeTab === 'expenses'
+                  ? 'nav-tab-active bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 font-extrabold shadow-lg shadow-amber-500/25 ring-2 ring-amber-300/80'
+                  : 'nav-tab-inactive text-slate-200 hover:text-white hover:bg-slate-800/80 border border-slate-700/60'
               }`}
             >
               Shop Expenses
             </button>
             <button
               onClick={() => setActiveTab('closing')}
-              className={`px-4 py-2 rounded-lg font-bold transition flex items-center gap-1.5 ${
-                activeTab === 'closing' ? 'bg-amber-500 text-slate-950 shadow' : 'text-slate-400 hover:text-white'
+              className={`px-4 py-2 rounded-lg font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                activeTab === 'closing'
+                  ? 'nav-tab-active bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 font-extrabold shadow-lg shadow-amber-500/25 ring-2 ring-amber-300/80'
+                  : 'nav-tab-inactive text-slate-200 hover:text-white hover:bg-slate-800/80 border border-slate-700/60'
               }`}
             >
               <Receipt className="w-3.5 h-3.5" />

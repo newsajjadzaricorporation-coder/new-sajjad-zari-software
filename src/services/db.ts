@@ -437,7 +437,13 @@ export class OfflineDB {
       userEmail,
       actionType: 'STOCK_OVERRIDE',
       entityId: `BATCH_${total}_ITEMS`,
-      details: `Bulk updated ${total} product records.`,
+      details: `Bulk updated ${total} product records (stock / pricing / alerts).`,
+    });
+
+    this.enqueuePendingSync({
+      type: 'BATCH_PRODUCT_UPDATE',
+      summary: `Bulk updated ${total} product(s) in catalog`,
+      data: { count: total, timestamp: Date.now() },
     });
 
     broadcastUpdate('PRODUCTS_UPDATED', updatedList);
@@ -761,20 +767,50 @@ export class OfflineDB {
 
   // SUPPLIERS & PURCHASES
   static getSuppliers(): Supplier[] {
-    return getLocalItem<Supplier[]>(DB_KEYS.SUPPLIERS, INITIAL_SUPPLIERS);
+    const raw = getLocalItem<Supplier[]>(DB_KEYS.SUPPLIERS, INITIAL_SUPPLIERS);
+    return (raw || []).map((s) => {
+      const companyName = s.companyName || s.name || s.company || 'Unnamed Supplier';
+      const category = s.category || s.categorySupplied || 'General';
+      return {
+        ...s,
+        name: s.name || companyName,
+        company: s.company || companyName,
+        companyName,
+        category,
+        categorySupplied: s.categorySupplied || category,
+        contactPerson: s.contactPerson || '',
+        phone: s.phone || '',
+        balancePayable: Number(s.balancePayable) || 0,
+        totalPurchased: Number(s.totalPurchased) || 0,
+        totalPaid: Number(s.totalPaid) || 0,
+      };
+    });
   }
 
   static saveSupplier(supplier: Supplier): Supplier {
     const suppliers = this.getSuppliers();
+    const companyName = supplier.companyName || supplier.name || supplier.company || 'Unnamed Supplier';
+    const category = supplier.category || supplier.categorySupplied || 'General';
+    const normalizedSupplier: Supplier = {
+      ...supplier,
+      companyName,
+      name: supplier.name || companyName,
+      company: supplier.company || companyName,
+      category,
+      categorySupplied: supplier.categorySupplied || category,
+      balancePayable: Number(supplier.balancePayable) || 0,
+      totalPurchased: Number(supplier.totalPurchased) || 0,
+      totalPaid: Number(supplier.totalPaid) || 0,
+    };
     const idx = suppliers.findIndex((s) => s.id === supplier.id);
     if (idx >= 0) {
-      suppliers[idx] = supplier;
+      suppliers[idx] = normalizedSupplier;
     } else {
-      suppliers.unshift(supplier);
+      suppliers.unshift(normalizedSupplier);
     }
     setLocalItem(DB_KEYS.SUPPLIERS, suppliers);
     broadcastUpdate('SUPPLIERS_UPDATED', suppliers);
-    return supplier;
+    return normalizedSupplier;
   }
 
   static deleteSupplier(supplierId: string, userEmail?: string): void {
@@ -784,11 +820,12 @@ export class OfflineDB {
     setLocalItem(DB_KEYS.SUPPLIERS, filtered);
 
     if (userEmail && sup) {
+      const displayName = sup.companyName || sup.name || sup.company || 'Supplier';
       this.addAuditLog({
         userEmail,
         actionType: 'SUPPLIER_DELETE' as any,
-        entityId: sup.companyName,
-        details: `Deleted supplier account: "${sup.companyName}"`,
+        entityId: displayName,
+        details: `Deleted supplier account: "${displayName}"`,
       });
     }
 
@@ -796,7 +833,16 @@ export class OfflineDB {
   }
 
   static getPurchases(): PurchaseOrder[] {
-    return getLocalItem<PurchaseOrder[]>(DB_KEYS.PURCHASES, INITIAL_PURCHASES);
+    const raw = getLocalItem<PurchaseOrder[]>(DB_KEYS.PURCHASES, INITIAL_PURCHASES);
+    return (raw || []).map((p) => ({
+      ...p,
+      purchaseNo: p.purchaseNo || 'PUR-ORD',
+      supplierName: p.supplierName || 'Unknown Vendor',
+      items: p.items || [],
+      totalAmount: Number(p.totalAmount) || 0,
+      paidAmount: Number(p.paidAmount) || 0,
+      date: p.date || new Date().toLocaleDateString(),
+    }));
   }
 
   static deletePurchase(purchaseId: string, userEmail?: string): void {
@@ -843,7 +889,7 @@ export class OfflineDB {
         userEmail,
         actionType: 'SUPPLIER_DELETE' as any,
         entityId: supplierIds.join(','),
-        details: `Batch deleted ${removed.length} supplier account(s): ${removed.map((s) => s.companyName).join(', ')}`,
+        details: `Batch deleted ${removed.length} supplier account(s): ${removed.map((s) => s.companyName || s.name || 'Supplier').join(', ')}`,
       });
     }
 

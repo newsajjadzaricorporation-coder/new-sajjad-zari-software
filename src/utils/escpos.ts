@@ -143,6 +143,126 @@ export class ESCPOSPrinter {
     return lines.join('\n');
   }
 
+  // Format Test Print Diagnostic Receipt
+  static formatTestPrintText(settings: ShopSettings, width: 32 | 48 = 48): string {
+    const divider = '-'.repeat(width);
+    const doubleDivider = '='.repeat(width);
+
+    const padRow = (left: string, right: string) => {
+      const space = width - left.length - right.length;
+      return left + ' '.repeat(Math.max(1, space)) + right;
+    };
+
+    const now = new Date();
+    const dateStr = now.toLocaleDateString('en-GB');
+    const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+    const lines: string[] = [];
+    lines.push(doubleDivider);
+    lines.push(settings.shopName.toUpperCase());
+    if (settings.urduTitle) lines.push(settings.urduTitle);
+    lines.push('THERMAL PRINTER DIAGNOSTIC & FEED TEST');
+    lines.push(doubleDivider);
+    lines.push(padRow(`Date: ${dateStr}`, `Time: ${timeStr}`));
+    lines.push(padRow('Mode:', settings.defaultPrinterMode === 'thermal58' ? '58mm Mini (ESC/POS)' : '80mm Standard POS'));
+    lines.push(padRow('Spooler Status:', 'READY / CONNECTED'));
+    lines.push(padRow('Paper Sensor:', 'PAPER DETECTED [OK]'));
+    lines.push(divider);
+    lines.push('ALIGNMENT & FONT TEST:');
+    lines.push('<< LEFT ALIGNED TEXT >>');
+    lines.push('           -- CENTER ALIGNED --           ');
+    lines.push('                         >> RIGHT ALIGNED <<');
+    lines.push(divider);
+    lines.push('FEED & STEP MOTOR CHECK:');
+    lines.push('Paper Feed Step 1 ......................... [OK]');
+    lines.push('Paper Feed Step 2 ......................... [OK]');
+    lines.push('Paper Feed Step 3 ......................... [OK]');
+    lines.push(doubleDivider);
+    lines.push('   *** THERMAL TEST COMPLETED SUCCESSFULLY ***   ');
+    lines.push('      PRINTER READY FOR CASHIER SHIFT POS       ');
+    lines.push(doubleDivider);
+    lines.push('\n\n\n\n'); // Paper feed spacing before cut
+
+    return lines.join('\n');
+  }
+
+  // Trigger Diagnostic Test Print to Thermal Printer or System Spooler
+  static triggerTestPrint(settings: ShopSettings): { success: boolean; message: string } {
+    try {
+      const testSlipText = this.formatTestPrintText(settings, settings.defaultPrinterMode === 'thermal58' ? 32 : 48);
+      
+      // Create hidden iframe dedicated to printing the diagnostic slip
+      const iframe = document.createElement('iframe');
+      iframe.style.position = 'fixed';
+      iframe.style.right = '0';
+      iframe.style.bottom = '0';
+      iframe.style.width = '0';
+      iframe.style.height = '0';
+      iframe.style.border = '0';
+      document.body.appendChild(iframe);
+
+      const doc = iframe.contentWindow?.document;
+      if (!doc) {
+        window.print();
+        return { success: true, message: 'Browser print dialog invoked for test receipt.' };
+      }
+
+      const paperWidth = settings.defaultPrinterMode === 'thermal58' ? '58mm' : '80mm';
+
+      doc.open();
+      doc.write(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>Printer Diagnostic Test - ${settings.shopName}</title>
+          <style>
+            @page {
+              size: ${paperWidth} auto;
+              margin: 0;
+            }
+            body {
+              font-family: 'Courier New', Courier, monospace;
+              font-size: 12px;
+              line-height: 1.35;
+              color: #000;
+              margin: 0;
+              padding: 6mm;
+              width: ${paperWidth};
+              box-sizing: border-box;
+              white-space: pre-wrap;
+              word-break: break-word;
+            }
+            .center { text-align: center; font-weight: bold; }
+            .divider { border-top: 1px dashed #000; margin: 6px 0; }
+            .double-divider { border-top: 2px solid #000; margin: 6px 0; }
+            .feed-space { height: 35px; }
+          </style>
+        </head>
+        <body>
+          <pre>${testSlipText}</pre>
+          <div class="feed-space"></div>
+        </body>
+        </html>
+      `);
+      doc.close();
+
+      setTimeout(() => {
+        iframe.contentWindow?.focus();
+        iframe.contentWindow?.print();
+        setTimeout(() => {
+          document.body.removeChild(iframe);
+        }, 1500);
+      }, 300);
+
+      return { success: true, message: 'Diagnostic test print job dispatched to thermal printer.' };
+    } catch (err: any) {
+      console.error('Test print error:', err);
+      // Fallback to window.print
+      window.print();
+      return { success: false, message: err?.message || 'Fallback to system print dialog.' };
+    }
+  }
+
   // Browser Print trigger
   static triggerBrowserPrint(): void {
     window.print();

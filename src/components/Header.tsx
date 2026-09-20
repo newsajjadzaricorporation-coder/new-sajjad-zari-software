@@ -117,23 +117,23 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Quick Action Badges & RBAC Switcher */}
           <div className="flex items-center gap-2 sm:gap-3">
-            {/* Interactive Firestore Sync & Diagnostic Status Badge with Pending Count */}
+            {/* Interactive Connection & Firestore Sync Indicator (Online / Offline / Syncing) */}
             <button
               type="button"
               onClick={() => setShowDiagnostics(!showDiagnostics)}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border transition cursor-pointer hover:opacity-90 ${
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border transition cursor-pointer hover:opacity-90 ${
                 isSyncInProgress
-                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 shadow-sm shadow-amber-500/10 ring-1 ring-amber-400/30'
+                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 shadow-sm shadow-amber-500/20 ring-1 ring-amber-400/40'
                   : !isOnline
-                  ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
-                  : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:border-emerald-500/50'
+                  ? 'bg-rose-500/20 text-rose-300 border-rose-500/40 shadow-sm shadow-rose-500/15'
+                  : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:border-emerald-500/50 shadow-sm shadow-emerald-500/10'
               }`}
               title={
                 isSyncInProgress
-                  ? 'Syncing... (Reconciling local OfflineDB with Cloud Firestore in real-time) • Click for Diagnostics'
+                  ? 'Syncing in progress... (Reconciling local OfflineDB with Cloud Firestore in real-time) • Click for Diagnostics'
                   : !isOnline
-                  ? `Offline Mode: Operating safely on local persistent cache. ${pendingRecordsCount} record(s) pending sync to cloud. Click for Diagnostics`
-                  : `Firestore Connected & Synced • Last Synced: ${
+                  ? `Offline: Operating safely on local persistent cache. ${pendingRecordsCount} record(s) queued for sync. Click for Diagnostics`
+                  : `Online & Synced • Last Synced: ${
                       formattedSyncTime || 'Active'
                     } • Click for Diagnostics`
               }
@@ -145,17 +145,19 @@ export const Header: React.FC<HeaderProps> = ({
                     <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
                   </span>
                   <RefreshCw className="w-3.5 h-3.5 text-amber-400 animate-spin" />
-                  <span className="hidden sm:inline font-bold text-amber-300">Syncing...</span>
-                  <span className="sm:hidden font-bold text-amber-300">Sync</span>
+                  <span className="font-bold text-amber-300">Syncing...</span>
                 </>
               ) : !isOnline ? (
                 <>
-                  <WifiOff className="w-3.5 h-3.5 text-amber-400" />
-                  <span className="hidden sm:inline">
+                  <span className="relative flex h-2 w-2">
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-rose-500"></span>
+                  </span>
+                  <WifiOff className="w-3.5 h-3.5 text-rose-400" />
+                  <span className="hidden sm:inline font-medium text-rose-300">
                     Offline ({pendingRecordsCount} pending)
                   </span>
-                  <span className="sm:hidden">
-                    Offline ({pendingRecordsCount})
+                  <span className="sm:hidden font-medium text-rose-300">
+                    Offline
                   </span>
                 </>
               ) : (
@@ -164,12 +166,12 @@ export const Header: React.FC<HeaderProps> = ({
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-40"></span>
                     <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400 shadow-sm shadow-emerald-400/50"></span>
                   </span>
-                  <Cloud className="w-3.5 h-3.5 text-emerald-400" />
-                  <span className="hidden sm:inline">
-                    Synced {formattedSyncTime ? formattedSyncTime : 'Online'}
+                  <Wifi className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="hidden sm:inline font-medium text-emerald-300">
+                    Online {formattedSyncTime ? `• ${formattedSyncTime}` : '• Synced'}
                   </span>
-                  <span className="sm:hidden">
-                    {formattedSyncTime ? formattedSyncTime : 'Synced'}
+                  <span className="sm:hidden font-medium text-emerald-300">
+                    Online
                   </span>
                 </>
               )}

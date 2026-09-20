@@ -272,7 +272,11 @@ export interface ShopSettings {
   currency: string;
   enableSoundEffects: boolean;
   autoPrintReceipt?: boolean;
+  autoPrintOnSale?: boolean;
   dailySalesGoal?: number;
+  dailyRevenueTarget?: number;
+  autoLockEnabled?: boolean;
+  autoLockMinutes?: number;
   defaultServiceFee?: number;
   defaultServiceFeeType?: 'flat' | 'percentage';
   loyaltyEnabled?: boolean;

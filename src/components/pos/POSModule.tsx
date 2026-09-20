@@ -31,6 +31,7 @@ import {
   Check,
   Star,
   Info,
+  Keyboard,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import {
@@ -45,6 +46,7 @@ import {
 } from '../../types';
 import { useSpeechRecognition } from '../../hooks/useSpeechRecognition';
 import { CameraBarcodeScannerModal } from '../CameraBarcodeScannerModal';
+import { ManualSearchModal } from './ManualSearchModal';
 import { OfflineDB } from '../../services/db';
 import {
   fuzzyProductMatch,
@@ -107,6 +109,11 @@ const POSModuleComponent: React.FC<POSModuleProps> = ({
 
   // Search input auto-focus ref
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const customerSelectRef = useRef<HTMLSelectElement | null>(null);
+
+  // Shortcut keys modal and scanner feedback
+  const [showShortcutsModal, setShowShortcutsModal] = useState<boolean>(false);
+  const [scannedFeedbackToast, setScannedFeedbackToast] = useState<string | null>(null);
 
   // Auto-focus search on mount
   useEffect(() => {
@@ -123,6 +130,9 @@ const POSModuleComponent: React.FC<POSModuleProps> = ({
   const [sortBy, setSortBy] = useState<'default' | 'price_asc' | 'price_desc' | 'name_asc' | 'stock_desc'>('default');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isScannerOpen, setIsScannerOpen] = useState(false);
+  const [isManualSearchOpen, setIsManualSearchOpen] = useState(false);
+  const [manualSearchInitialQuery, setManualSearchInitialQuery] = useState<string>('');
+  const [manualSearchFailedBarcode, setManualSearchFailedBarcode] = useState<string | null>(null);
   const [showLoyaltyInfoModal, setShowLoyaltyInfoModal] = useState(false);
 
   // Pagination for POS Product Catalog
@@ -411,16 +421,58 @@ const POSModuleComponent: React.FC<POSModuleProps> = ({
     });
   };
 
-  // Barcode scanned callback
+  // Manual Search Modal Handlers
+  const handleOpenManualSearch = (initialQueryStr = '', failedCode: string | null = null) => {
+    setManualSearchFailedBarcode(failedCode);
+    setManualSearchInitialQuery(initialQueryStr || searchQuery || '');
+    setIsManualSearchOpen(true);
+    playKeyAudio(580);
+  };
+
+  // Barcode scanned callback with Fallback Manual Search Trigger
   const handleBarcodeScanned = (barcode: string) => {
+    const cleanCode = barcode.trim();
+    if (!cleanCode) return;
+
     const found = products.find(
-      (p) => p.barcode === barcode || p.sku.toLowerCase() === barcode.toLowerCase()
+      (p) =>
+        (p.barcode && p.barcode.trim() === cleanCode) ||
+        p.sku.toLowerCase() === cleanCode.toLowerCase()
     );
+
     if (found) {
       handleAddToCart(found);
+      setScannedFeedbackToast(`Scanned: ${found.name} (${found.sku})`);
+      setTimeout(() => setScannedFeedbackToast(null), 3000);
+      playKeyAudio(880);
     } else {
-      alert(`Product with barcode/SKU "${barcode}" not found in inventory.`);
+      // Fallback: trigger Manual Search modal with the scanned barcode / SKU prefilled
+      playKeyAudio(350);
+      setScannedFeedbackToast(`Item not found for code: "${cleanCode}" - Opening Manual Search`);
+      setTimeout(() => setScannedFeedbackToast(null), 3500);
+      handleOpenManualSearch(cleanCode, cleanCode);
     }
+  };
+
+  // Link Unrecognized Barcode to an Existing Product and Add to Cart
+  const handleLinkBarcodeAndAdd = (product: Product, barcode: string) => {
+    const cleanBarcode = barcode.trim();
+    if (!cleanBarcode) {
+      handleAddToCart(product);
+      return;
+    }
+
+    const updatedProduct: Product = {
+      ...product,
+      barcode: cleanBarcode,
+      updatedAt: new Date().toISOString(),
+    };
+
+    OfflineDB.saveProduct(updatedProduct, currentUser?.email || 'admin');
+    handleAddToCart(updatedProduct);
+    setScannedFeedbackToast(`Linked Barcode "${cleanBarcode}" to ${product.name}`);
+    setTimeout(() => setScannedFeedbackToast(null), 3500);
+    playKeyAudio(880);
   };
 
   // Cart item updates
@@ -647,18 +699,96 @@ const POSModuleComponent: React.FC<POSModuleProps> = ({
     });
 
     setLastSale(saleRecord);
-    setShowPrintToast(true);
-    onCompleteSale(saleRecord);
-
-    // Auto-Print Receipt if enabled in settings
-    if (settings.autoPrintReceipt) {
-      setTimeout(() => {
-        window.print();
-      }, 400);
+    const isAutoPrint = Boolean(settings.autoPrintOnSale || settings.autoPrintReceipt);
+    if (!isAutoPrint) {
+      setShowPrintToast(true);
     }
+    onCompleteSale(saleRecord);
 
     clearCart();
   };
+
+  // Hardware Barcode Scanner & Global POS Shortcuts Listener (F1, F2, F8)
+  const barcodeBufferRef = useRef<string>('');
+  const lastKeyTimeRef = useRef<number>(0);
+
+  useEffect(() => {
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      // 1. Function Key Shortcuts:
+      // F1: Toggle Barcode Scan Mode / Camera Scanner
+      if (e.key === 'F1') {
+        e.preventDefault();
+        setIsScannerOpen((prev) => !prev);
+        playKeyAudio(600);
+        return;
+      }
+      // F2: Focus Customer Search / Selection
+      if (e.key === 'F2') {
+        e.preventDefault();
+        customerSelectRef.current?.focus();
+        playKeyAudio(550);
+        return;
+      }
+      // F3: Manual Product Search / Quick Lookup Modal
+      if (e.key === 'F3') {
+        e.preventDefault();
+        handleOpenManualSearch();
+        return;
+      }
+      // F8: Trigger Checkout / Complete Sale
+      if (e.key === 'F8') {
+        e.preventDefault();
+        if (cart.length > 0) {
+          handleCheckout();
+          playKeyAudio(700);
+        } else {
+          alert('Cart is empty. Please add items to checkout.');
+        }
+        return;
+      }
+      // F9: Open Shortcut Keys Overview Overlay
+      if (e.key === 'F9') {
+        e.preventDefault();
+        setShowShortcutsModal((prev) => !prev);
+        return;
+      }
+
+      // 2. Hardware Barcode Scanner Listener:
+      // Commercial barcode scanners act as HID input devices, entering a burst of characters (<50ms apart) ending with Enter.
+      const now = Date.now();
+      const timeDiff = now - lastKeyTimeRef.current;
+      lastKeyTimeRef.current = now;
+
+      // If time between keystrokes is excessive (> 75ms) and key isn't Enter, reset the scan buffer
+      if (timeDiff > 75 && e.key !== 'Enter') {
+        barcodeBufferRef.current = '';
+      }
+
+      // If Enter key is pressed and we accumulated a barcode sequence
+      if (e.key === 'Enter') {
+        const buffered = barcodeBufferRef.current.trim();
+        if (buffered.length >= 2) {
+          e.preventDefault();
+          handleBarcodeScanned(buffered);
+          setScannedFeedbackToast(`Scanned Barcode: ${buffered}`);
+          setTimeout(() => setScannedFeedbackToast(null), 3000);
+          playKeyAudio(880);
+          barcodeBufferRef.current = '';
+          return;
+        }
+        barcodeBufferRef.current = '';
+        return;
+      }
+
+      // Buffer printable characters
+      if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        barcodeBufferRef.current += e.key;
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
+  }, [cart, handleCheckout, handleBarcodeScanned, handleOpenManualSearch]);
 
   return (
     <div className="flex-1 flex flex-col lg:flex-row h-[calc(100vh-4rem)] overflow-hidden bg-slate-900">
@@ -713,10 +843,10 @@ const POSModuleComponent: React.FC<POSModuleProps> = ({
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Fuzzy search: Zari threads, laces, borders, Urdu (تلہ), SKU, barcode..."
-                className={`w-full bg-slate-800/90 border rounded-xl pl-9 pr-10 py-2 text-sm text-white placeholder-slate-400 focus:outline-none transition ${
+                className={`w-full bg-slate-900 border-2 rounded-xl pl-9 pr-10 py-2.5 text-sm text-white font-medium placeholder-slate-400 focus:outline-none transition ${
                   isListening
-                    ? 'border-red-500/80 ring-2 ring-red-500/30'
-                    : 'border-slate-700/80 focus:border-amber-400 focus:ring-1 focus:ring-amber-400'
+                    ? 'border-red-500 ring-2 ring-red-500/40'
+                    : 'border-slate-600 focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30'
                 }`}
               />
               {searchQuery && (
@@ -750,11 +880,33 @@ const POSModuleComponent: React.FC<POSModuleProps> = ({
             <button
               type="button"
               onClick={() => setIsScannerOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-2 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 rounded-xl text-xs font-semibold transition shrink-0"
-              title="Open Camera Barcode Scanner"
+              className="flex items-center gap-1.5 px-3 py-2 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 rounded-xl text-xs font-semibold transition shrink-0 cursor-pointer"
+              title="Open Camera Barcode Scanner (Shortcut: F1)"
             >
               <Camera className="w-4 h-4" />
-              <span className="hidden sm:inline">Scan Barcode</span>
+              <span className="hidden sm:inline">Scan (F1)</span>
+            </button>
+
+            {/* Manual Product Search Trigger */}
+            <button
+              type="button"
+              onClick={() => handleOpenManualSearch()}
+              className="flex items-center gap-1.5 px-3 py-2 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 text-blue-400 rounded-xl text-xs font-semibold transition shrink-0 cursor-pointer"
+              title="Manual Product Search & Barcode Lookup (Shortcut: F3)"
+            >
+              <Search className="w-4 h-4" />
+              <span className="hidden sm:inline">Manual Search (F3)</span>
+            </button>
+
+            {/* Shortcut Keys Overlay Trigger */}
+            <button
+              type="button"
+              onClick={() => setShowShortcutsModal(true)}
+              className="flex items-center gap-1.5 px-2.5 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-medium transition shrink-0 cursor-pointer"
+              title="View POS Keyboard Shortcuts (F1, F2, F8, F9)"
+            >
+              <Keyboard className="w-4 h-4 text-amber-400" />
+              <span className="hidden md:inline">Shortcuts</span>
             </button>
           </div>
 
@@ -876,10 +1028,10 @@ const POSModuleComponent: React.FC<POSModuleProps> = ({
                 <button
                   key={cat}
                   onClick={() => setSelectedCategory(cat)}
-                  className={`px-3 py-1.5 rounded-lg whitespace-nowrap font-medium transition ${
+                  className={`px-3 py-1.5 rounded-lg whitespace-nowrap font-bold transition cursor-pointer ${
                     isSelected
-                      ? 'bg-amber-500 text-slate-950 font-bold shadow-md shadow-amber-500/10'
-                      : 'bg-slate-800/80 text-slate-300 hover:bg-slate-700/80 hover:text-white border border-slate-750'
+                      ? 'nav-tab-active bg-gradient-to-r from-amber-400 to-amber-500 text-slate-950 font-extrabold shadow-lg shadow-amber-500/25 ring-2 ring-amber-300/80'
+                      : 'nav-tab-inactive text-slate-200 hover:text-white hover:bg-slate-800/80 border border-slate-700/60'
                   }`}
                 >
                   {cat}
@@ -1090,6 +1242,7 @@ const POSModuleComponent: React.FC<POSModuleProps> = ({
 
           <div className="flex gap-2">
             <select
+              ref={customerSelectRef}
               aria-label="Customer Selection"
               value={selectedCustomerId}
               onChange={(e) => setSelectedCustomerId(e.target.value)}
@@ -1315,10 +1468,10 @@ const POSModuleComponent: React.FC<POSModuleProps> = ({
                 min="0"
                 value={discountValue || ''}
                 onChange={(e) => setDiscountValue(parseFloat(e.target.value) || 0)}
-                placeholder="Discount..."
-                className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-xs text-right text-white placeholder-slate-500 focus:outline-none focus:border-amber-400"
+                placeholder="0"
+                className="w-full bg-slate-900 border border-slate-600 rounded-lg px-2.5 py-1 text-xs text-right text-white font-semibold placeholder-slate-400 focus:outline-none focus:border-amber-400"
               />
-              <span className="text-xs text-slate-400">
+              <span className="text-xs text-slate-300 font-bold">
                 {discountType === 'flat' ? 'Rs' : '%'}
               </span>
             </div>
@@ -1530,20 +1683,20 @@ const POSModuleComponent: React.FC<POSModuleProps> = ({
 
           {/* Cash Tendered & Change Row (Only in Cash mode) */}
           {paymentMethod === 'cash' && cart.length > 0 && (
-            <div className="flex items-center justify-between gap-2 p-2 bg-slate-900 rounded-lg border border-slate-800 text-xs">
-              <div className="flex items-center gap-1">
-                <span className="text-slate-400">Cash Received:</span>
+            <div className="flex items-center justify-between gap-2 p-2 bg-slate-900 rounded-lg border border-slate-700 text-xs shadow-inner">
+              <div className="flex items-center gap-1.5">
+                <span className="text-slate-300 font-medium">Cash Received:</span>
                 <input
                   type="number"
                   placeholder={String(netTotal)}
                   value={amountTendered}
                   onChange={(e) => setAmountTendered(e.target.value)}
-                  className="w-24 bg-slate-800 border border-slate-700 rounded px-2 py-0.5 text-right text-white focus:outline-none focus:border-amber-400"
+                  className="w-28 bg-slate-950 border border-slate-600 rounded-md px-2.5 py-1 text-right text-white font-bold focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400 placeholder-slate-500"
                 />
               </div>
               <div>
-                <span className="text-slate-400">Change: </span>
-                <span className="font-bold text-emerald-400">Rs {changeDue.toLocaleString()}</span>
+                <span className="text-slate-300">Change: </span>
+                <span className="font-bold text-emerald-400 text-sm">Rs {changeDue.toLocaleString()}</span>
               </div>
             </div>
           )}
@@ -1566,6 +1719,25 @@ const POSModuleComponent: React.FC<POSModuleProps> = ({
         isOpen={isScannerOpen}
         onClose={() => setIsScannerOpen(false)}
         onScan={handleBarcodeScanned}
+      />
+
+      {/* Manual Product Search & Barcode Fallback Modal */}
+      <ManualSearchModal
+        isOpen={isManualSearchOpen}
+        onClose={() => {
+          setIsManualSearchOpen(false);
+          setManualSearchFailedBarcode(null);
+        }}
+        onSelectProduct={(product) => {
+          handleAddToCart(product);
+          setScannedFeedbackToast(`Added to cart: ${product.name}`);
+          setTimeout(() => setScannedFeedbackToast(null), 3000);
+          playKeyAudio(750);
+        }}
+        initialQuery={manualSearchInitialQuery}
+        failedBarcode={manualSearchFailedBarcode}
+        products={products}
+        onLinkBarcodeAndAdd={handleLinkBarcodeAndAdd}
       />
 
       {/* Loyalty Tiers & Benefits Info Modal */}
@@ -1724,7 +1896,7 @@ const POSModuleComponent: React.FC<POSModuleProps> = ({
                 onCompleteSale(lastSale);
                 setShowPrintToast(false);
               }}
-              className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-lg text-xs font-black flex items-center gap-1.5 shadow transition"
+              className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-lg text-xs font-black flex items-center gap-1.5 shadow transition cursor-pointer"
             >
               <Printer className="w-3.5 h-3.5" />
               Immediate Print
@@ -1732,10 +1904,142 @@ const POSModuleComponent: React.FC<POSModuleProps> = ({
             <button
               type="button"
               onClick={() => setShowPrintToast(false)}
-              className="p-1 rounded-lg text-slate-400 hover:text-white"
+              className="p-1 rounded-lg text-slate-400 hover:text-white cursor-pointer"
             >
               <X className="w-4 h-4" />
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Barcode Scanner Instant Feedback Notification */}
+      {scannedFeedbackToast && (
+        <div className="fixed top-20 right-6 z-50 bg-slate-900 border border-amber-500/50 rounded-xl px-4 py-2.5 shadow-2xl flex items-center gap-3 animate-in fade-in slide-in-from-top-3 duration-200">
+          <div className="p-1.5 rounded-lg bg-amber-500/20 text-amber-400">
+            <ScanLine className="w-4 h-4 animate-pulse" />
+          </div>
+          <div>
+            <div className="text-xs font-bold text-white flex items-center gap-1.5">
+              <span>Barcode Input Detected</span>
+              <span className="text-[10px] bg-amber-500/20 text-amber-300 px-1.5 py-0.2 rounded font-mono">Auto-Lookup</span>
+            </div>
+            <p className="text-[11px] text-amber-300 font-mono">{scannedFeedbackToast}</p>
+          </div>
+        </div>
+      )}
+
+      {/* Keyboard Shortcut Keys Overview Modal / Overlay */}
+      {showShortcutsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="relative w-full max-w-md bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl p-5 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                  <Keyboard className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">POS Keyboard Shortcuts (شارٹ کٹ کیز)</h3>
+                  <p className="text-xs text-slate-400">High-speed retail keys for cashier productivity</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowShortcutsModal(false)}
+                className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-2 text-xs">
+              <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950 border border-slate-800">
+                <div className="flex items-center gap-2.5">
+                  <span className="px-2.5 py-1 rounded-lg bg-amber-500 text-slate-950 font-black font-mono text-xs shadow-sm">
+                    F1
+                  </span>
+                  <div>
+                    <div className="font-bold text-white">Toggle Barcode Scanner</div>
+                    <div className="text-[11px] text-slate-400">Open camera or focus hardware scanner</div>
+                  </div>
+                </div>
+                <Camera className="w-4 h-4 text-amber-400" />
+              </div>
+
+              <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950 border border-slate-800">
+                <div className="flex items-center gap-2.5">
+                  <span className="px-2.5 py-1 rounded-lg bg-amber-500 text-slate-950 font-black font-mono text-xs shadow-sm">
+                    F2
+                  </span>
+                  <div>
+                    <div className="font-bold text-white">Customer Search / Khata</div>
+                    <div className="text-[11px] text-slate-400">Focus customer selection and balance</div>
+                  </div>
+                </div>
+                <User className="w-4 h-4 text-amber-400" />
+              </div>
+
+              <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950 border border-slate-800">
+                <div className="flex items-center gap-2.5">
+                  <span className="px-2.5 py-1 rounded-lg bg-blue-500 text-slate-950 font-black font-mono text-xs shadow-sm">
+                    F3
+                  </span>
+                  <div>
+                    <div className="font-bold text-white">Manual Search & Item Lookup</div>
+                    <div className="text-[11px] text-slate-400">Open quick search modal & barcode fallback</div>
+                  </div>
+                </div>
+                <Search className="w-4 h-4 text-blue-400" />
+              </div>
+
+              <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950 border border-slate-800">
+                <div className="flex items-center gap-2.5">
+                  <span className="px-2.5 py-1 rounded-lg bg-emerald-500 text-slate-950 font-black font-mono text-xs shadow-sm">
+                    F8
+                  </span>
+                  <div>
+                    <div className="font-bold text-white">Checkout & Finalize Bill</div>
+                    <div className="text-[11px] text-slate-400">Complete transaction instantly</div>
+                  </div>
+                </div>
+                <CheckCircle className="w-4 h-4 text-emerald-400" />
+              </div>
+
+              <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950 border border-slate-800">
+                <div className="flex items-center gap-2.5">
+                  <span className="px-2.5 py-1 rounded-lg bg-slate-800 text-slate-200 border border-slate-700 font-black font-mono text-xs">
+                    F9
+                  </span>
+                  <div>
+                    <div className="font-bold text-white">Shortcut Help Overlay</div>
+                    <div className="text-[11px] text-slate-400">Toggle this reference guide</div>
+                  </div>
+                </div>
+                <Info className="w-4 h-4 text-slate-400" />
+              </div>
+
+              <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950 border border-slate-800">
+                <div className="flex items-center gap-2.5">
+                  <span className="px-2 py-1 rounded-lg bg-slate-800 text-slate-300 font-mono text-[11px] border border-slate-700">
+                    HID Scanner
+                  </span>
+                  <div>
+                    <div className="font-bold text-white">USB / Wireless Barcode Gun</div>
+                    <div className="text-[11px] text-slate-400">Aim & scan at any time (auto Enter lookup)</div>
+                  </div>
+                </div>
+                <ScanLine className="w-4 h-4 text-amber-400" />
+              </div>
+            </div>
+
+            <div className="pt-2 border-t border-slate-800 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowShortcutsModal(false)}
+                className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl text-xs shadow transition cursor-pointer"
+              >
+                Got It (ٹھیک ہے)
+              </button>
+            </div>
           </div>
         </div>
       )}
