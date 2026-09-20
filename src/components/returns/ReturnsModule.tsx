@@ -9,9 +9,11 @@ import {
   DollarSign,
   Package,
   ArrowRight,
+  Trash2,
 } from 'lucide-react';
 import { SaleInvoice, ReturnRecord, UserProfile, ShopSettings } from '../../types';
 import { OfflineDB } from '../../services/db';
+import { PaginationControls } from '../common/PaginationControls';
 
 interface ReturnsModuleProps {
   sales: SaleInvoice[];
@@ -20,7 +22,7 @@ interface ReturnsModuleProps {
   onRefreshSales: () => void;
 }
 
-export const ReturnsModule: React.FC<ReturnsModuleProps> = ({
+const ReturnsModuleComponent: React.FC<ReturnsModuleProps> = ({
   sales,
   currentUser,
   settings,
@@ -35,6 +37,16 @@ export const ReturnsModule: React.FC<ReturnsModuleProps> = ({
   const [refundMethod, setRefundMethod] = useState<'cash' | 'khata_credit'>('cash');
   const [returnReason, setReturnReason] = useState('Customer exchange / excess quantity');
   const [recentReturns, setRecentReturns] = useState<ReturnRecord[]>(OfflineDB.getReturns());
+  const [returnToDelete, setReturnToDelete] = useState<ReturnRecord | null>(null);
+
+  // Pagination for returns history
+  const [returnsPage, setReturnsPage] = useState(1);
+  const [returnsPageSize, setReturnsPageSize] = useState(10);
+
+  const paginatedReturns = useMemo(() => {
+    const start = (returnsPage - 1) * returnsPageSize;
+    return recentReturns.slice(start, start + returnsPageSize);
+  }, [recentReturns, returnsPage, returnsPageSize]);
 
   // Search invoice
   const handleLookup = (e: React.FormEvent) => {
@@ -127,6 +139,7 @@ export const ReturnsModule: React.FC<ReturnsModuleProps> = ({
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
             <input
+              autoFocus
               type="text"
               value={searchInvoiceNo}
               onChange={(e) => setSearchInvoiceNo(e.target.value)}
@@ -317,17 +330,18 @@ export const ReturnsModule: React.FC<ReturnsModuleProps> = ({
                 <th className="p-3">Date</th>
                 <th className="p-3">Items Returned</th>
                 <th className="p-3 text-right">Refund Amount (Rs)</th>
+                <th className="p-3 text-right w-16">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800">
-              {recentReturns.length === 0 ? (
+              {paginatedReturns.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="p-6 text-center text-slate-500">
+                  <td colSpan={7} className="p-6 text-center text-slate-500">
                     No return credit notes processed yet.
                   </td>
                 </tr>
               ) : (
-                recentReturns.map((ret) => (
+                paginatedReturns.map((ret) => (
                   <tr key={ret.id} className="hover:bg-slate-900/40">
                     <td className="p-3 font-mono font-bold text-amber-400">{ret.invoiceNo}</td>
                     <td className="p-3 font-mono text-slate-400">{ret.originalInvoiceNo}</td>
@@ -339,13 +353,88 @@ export const ReturnsModule: React.FC<ReturnsModuleProps> = ({
                     <td className="p-3 text-right font-bold text-emerald-400">
                       Rs {ret.refundAmount.toLocaleString()}
                     </td>
+                    <td className="p-3 text-right">
+                      <button
+                        type="button"
+                        onClick={() => setReturnToDelete(ret)}
+                        className="p-1.5 rounded-lg text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 transition cursor-pointer"
+                        title="Delete Return Record"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </td>
                   </tr>
                 ))
               )}
             </tbody>
           </table>
         </div>
+
+        {recentReturns.length > 5 && (
+          <div className="p-4 border-t border-slate-800 bg-slate-900/40">
+            <PaginationControls
+              currentPage={returnsPage}
+              totalItems={recentReturns.length}
+              pageSize={returnsPageSize}
+              onPageChange={setReturnsPage}
+              onPageSizeChange={setReturnsPageSize}
+              pageSizeOptions={[5, 10, 25, 50]}
+            />
+          </div>
+        )}
       </div>
+
+      {/* Delete Return Confirmation Modal */}
+      {returnToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-150">
+          <div className="relative w-full max-w-md bg-slate-900 border border-red-500/40 rounded-2xl shadow-2xl p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-red-500/20 border border-red-500/30 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5 text-red-400" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Delete Return Credit Note</h3>
+                <p className="text-xs text-slate-400">Permanently remove this return credit note</p>
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-slate-950 rounded-xl border border-slate-800 space-y-1.5 text-xs">
+              <div className="text-slate-200 font-bold">
+                Credit Note: #{returnToDelete.invoiceNo || returnToDelete.returnNo}
+              </div>
+              <div className="text-slate-400">Original Invoice: #{returnToDelete.originalInvoiceNo}</div>
+              <div className="text-slate-400">Customer: {returnToDelete.customerName} | Date: {returnToDelete.date}</div>
+              <div className="text-emerald-400 font-bold font-mono text-sm pt-1">
+                Refund Amount: Rs {returnToDelete.refundAmount.toLocaleString()}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setReturnToDelete(null)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  OfflineDB.deleteReturn(returnToDelete.id, currentUser.email);
+                  setRecentReturns((prev) => prev.filter((r) => r.id !== returnToDelete.id));
+                  setReturnToDelete(null);
+                  onRefreshSales();
+                }}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shadow-lg shadow-red-600/20 cursor-pointer"
+              >
+                Confirm Delete Return
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+
+export const ReturnsModule = React.memo(ReturnsModuleComponent);

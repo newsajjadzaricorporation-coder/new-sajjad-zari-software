@@ -11,7 +11,10 @@ import {
   ShieldAlert,
   BarChart3,
   Filter,
+  Download,
+  FileText,
 } from 'lucide-react';
+import { generateProfitReportPDF } from '../../utils/pdfReport';
 import {
   ResponsiveContainer,
   BarChart,
@@ -28,18 +31,42 @@ import {
   Legend,
 } from 'recharts';
 import { Product, SaleInvoice } from '../../types';
+import { PaginationControls } from '../common/PaginationControls';
 
 interface ProfitMarginHeatmapModuleProps {
   products: Product[];
   sales: SaleInvoice[];
 }
 
-export const ProfitMarginHeatmapModule: React.FC<ProfitMarginHeatmapModuleProps> = ({
+const ProfitMarginHeatmapModuleComponent: React.FC<ProfitMarginHeatmapModuleProps> = ({
   products,
   sales,
 }) => {
   const [marginFilter, setMarginFilter] = useState<'all' | 'high' | 'moderate' | 'loss'>('all');
   const [sortBy, setSortBy] = useState<'marginPct' | 'profitRs' | 'stock'>('marginPct');
+
+  // Heatmap Table Pagination
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(15);
+  const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
+
+  const handleDownloadReport = () => {
+    setIsGeneratingPDF(true);
+    try {
+      generateProfitReportPDF({
+        products,
+        sales,
+        productMargins,
+        analyticsSummary,
+        shopName: 'New Sajjad Zari Corporation',
+      });
+    } catch (err) {
+      console.error('Failed to generate PDF report:', err);
+      alert('Could not generate PDF report. Please try again.');
+    } finally {
+      setIsGeneratingPDF(false);
+    }
+  };
 
   // Compute margins for all products
   const productMargins = useMemo(() => {
@@ -116,6 +143,11 @@ export const ProfitMarginHeatmapModule: React.FC<ProfitMarginHeatmapModuleProps>
         return 0;
       });
   }, [productMargins, marginFilter, sortBy]);
+
+  const paginatedDisplayItems = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return displayItems.slice(start, start + pageSize);
+  }, [displayItems, page, pageSize]);
 
   // Chart data for top 10 items by profit margin
   const top10ChartData = useMemo(() => {
@@ -208,49 +240,62 @@ export const ProfitMarginHeatmapModule: React.FC<ProfitMarginHeatmapModuleProps>
           </p>
         </div>
 
-        {/* Heatmap Category Filter Tabs */}
-        <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
+        {/* Actions & Heatmap Category Filter Tabs */}
+        <div className="flex flex-wrap items-center gap-3">
           <button
-            onClick={() => setMarginFilter('all')}
-            className={`px-3 py-1.5 rounded-lg font-semibold transition ${
-              marginFilter === 'all'
-                ? 'bg-amber-500 text-slate-950 shadow'
-                : 'text-slate-400 hover:text-white'
-            }`}
+            type="button"
+            onClick={handleDownloadReport}
+            disabled={isGeneratingPDF}
+            className="flex items-center gap-2 px-3.5 py-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-bold rounded-xl text-xs transition shadow-md shadow-amber-500/20 disabled:opacity-50 cursor-pointer"
+            title="Generate and download a PDF summary of the current inventory and profit trends"
           >
-            All ({productMargins.length})
+            <Download className="w-4 h-4 text-slate-950" />
+            <span>{isGeneratingPDF ? 'Generating PDF...' : 'Download Report'}</span>
           </button>
-          <button
-            onClick={() => setMarginFilter('high')}
-            className={`px-3 py-1.5 rounded-lg font-semibold transition flex items-center gap-1 ${
-              marginFilter === 'high'
-                ? 'bg-emerald-500 text-slate-950 shadow'
-                : 'text-emerald-400 hover:bg-slate-800'
-            }`}
-          >
-            High Margin ({analyticsSummary.highCount})
-          </button>
-          <button
-            onClick={() => setMarginFilter('moderate')}
-            className={`px-3 py-1.5 rounded-lg font-semibold transition flex items-center gap-1 ${
-              marginFilter === 'moderate'
-                ? 'bg-amber-500 text-slate-950 shadow'
-                : 'text-amber-400 hover:bg-slate-800'
-            }`}
-          >
-            Moderate ({analyticsSummary.moderateCount})
-          </button>
-          <button
-            onClick={() => setMarginFilter('loss')}
-            className={`px-3 py-1.5 rounded-lg font-semibold transition flex items-center gap-1 ${
-              marginFilter === 'loss'
-                ? 'bg-red-500 text-white shadow'
-                : 'text-red-400 hover:bg-slate-800'
-            }`}
-          >
-            <ShieldAlert className="w-3.5 h-3.5" />
-            Below Cost ({analyticsSummary.lossCount})
-          </button>
+
+          <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
+            <button
+              onClick={() => setMarginFilter('all')}
+              className={`px-3 py-1.5 rounded-lg font-semibold transition ${
+                marginFilter === 'all'
+                  ? 'bg-amber-500 text-slate-950 shadow'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              All ({productMargins.length})
+            </button>
+            <button
+              onClick={() => setMarginFilter('high')}
+              className={`px-3 py-1.5 rounded-lg font-semibold transition flex items-center gap-1 ${
+                marginFilter === 'high'
+                  ? 'bg-emerald-500 text-slate-950 shadow'
+                  : 'text-emerald-400 hover:bg-slate-800'
+              }`}
+            >
+              High Margin ({analyticsSummary.highCount})
+            </button>
+            <button
+              onClick={() => setMarginFilter('moderate')}
+              className={`px-3 py-1.5 rounded-lg font-semibold transition flex items-center gap-1 ${
+                marginFilter === 'moderate'
+                  ? 'bg-amber-500 text-slate-950 shadow'
+                  : 'text-amber-400 hover:bg-slate-800'
+              }`}
+            >
+              Moderate ({analyticsSummary.moderateCount})
+            </button>
+            <button
+              onClick={() => setMarginFilter('loss')}
+              className={`px-3 py-1.5 rounded-lg font-semibold transition flex items-center gap-1 ${
+                marginFilter === 'loss'
+                  ? 'bg-red-500 text-white shadow'
+                  : 'text-red-400 hover:bg-slate-800'
+              }`}
+            >
+              <ShieldAlert className="w-3.5 h-3.5" />
+              Below Cost ({analyticsSummary.lossCount})
+            </button>
+          </div>
         </div>
       </div>
 
@@ -515,60 +560,83 @@ export const ProfitMarginHeatmapModule: React.FC<ProfitMarginHeatmapModuleProps>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
-              {displayItems.map((item) => {
-                let badgeClass = 'bg-amber-500/15 text-amber-300 border-amber-500/30';
-                if (item.isLoss) {
-                  badgeClass = 'bg-red-500/20 text-red-300 border-red-500/40 animate-pulse';
-                } else if (item.marginPct >= 25) {
-                  badgeClass = 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30';
-                }
+              {paginatedDisplayItems.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="p-8 text-center text-slate-500">
+                    No products matching current filter criteria.
+                  </td>
+                </tr>
+              ) : (
+                paginatedDisplayItems.map((item) => {
+                  let badgeClass = 'bg-amber-500/15 text-amber-300 border-amber-500/30';
+                  if (item.isLoss) {
+                    badgeClass = 'bg-red-500/20 text-red-300 border-red-500/40 animate-pulse';
+                  } else if (item.marginPct >= 25) {
+                    badgeClass = 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30';
+                  }
 
-                return (
-                  <tr key={item.id} className="hover:bg-slate-900/50 transition">
-                    <td className="p-3.5 font-bold text-white">
-                      <div>{item.name}</div>
-                      <div className="text-[11px] text-slate-500 font-normal">
-                        SKU: {item.sku} | {item.category}
-                      </div>
-                    </td>
-                    <td className="p-3.5 text-right text-slate-400">
-                      Rs {item.cost.toLocaleString()}
-                    </td>
-                    <td className="p-3.5 text-right font-bold text-slate-200">
-                      Rs {item.selling.toLocaleString()}
-                    </td>
-                    <td
-                      className={`p-3.5 text-right font-bold ${
-                        item.profitRs < 0 ? 'text-red-400' : 'text-emerald-400'
-                      }`}
-                    >
-                      {item.profitRs >= 0 ? '+' : ''}Rs {item.profitRs.toLocaleString()}
-                    </td>
-                    <td className="p-3.5 text-center">
-                      <span
-                        className={`inline-block px-3 py-1 rounded-full text-xs font-black border ${badgeClass}`}
+                  return (
+                    <tr key={item.id} className="hover:bg-slate-900/50 transition">
+                      <td className="p-3.5 font-bold text-white">
+                        <div>{item.name}</div>
+                        <div className="text-[11px] text-slate-500 font-normal">
+                          SKU: {item.sku} | {item.category}
+                        </div>
+                      </td>
+                      <td className="p-3.5 text-right text-slate-400">
+                        Rs {item.cost.toLocaleString()}
+                      </td>
+                      <td className="p-3.5 text-right font-bold text-slate-200">
+                        Rs {item.selling.toLocaleString()}
+                      </td>
+                      <td
+                        className={`p-3.5 text-right font-bold ${
+                          item.profitRs < 0 ? 'text-red-400' : 'text-emerald-400'
+                        }`}
                       >
-                        {item.marginPct}% {item.isLoss ? 'LOSS' : ''}
-                      </span>
-                    </td>
-                    <td className="p-3.5 text-center font-semibold text-slate-300">
-                      {item.stock} {item.unit}
-                    </td>
-                    <td className="p-3.5 text-right">
-                      <div className="text-slate-300 font-medium">
-                        ~{item.daysUntilStockout} days remaining
-                      </div>
-                      <div className="text-[10px] text-slate-500">
-                        ({item.dailyVelocity.toFixed(1)} {item.unit}/day)
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
+                        {item.profitRs >= 0 ? '+' : ''}Rs {item.profitRs.toLocaleString()}
+                      </td>
+                      <td className="p-3.5 text-center">
+                        <span
+                          className={`inline-block px-3 py-1 rounded-full text-xs font-black border ${badgeClass}`}
+                        >
+                          {item.marginPct}% {item.isLoss ? 'LOSS' : ''}
+                        </span>
+                      </td>
+                      <td className="p-3.5 text-center font-semibold text-slate-300">
+                        {item.stock} {item.unit}
+                      </td>
+                      <td className="p-3.5 text-right">
+                        <div className="text-slate-300 font-medium">
+                          ~{item.daysUntilStockout} days remaining
+                        </div>
+                        <div className="text-[10px] text-slate-500">
+                          ({item.dailyVelocity.toFixed(1)} {item.unit}/day)
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>
+
+        {displayItems.length > 10 && (
+          <div className="p-4 border-t border-slate-800 bg-slate-900/40">
+            <PaginationControls
+              currentPage={page}
+              totalItems={displayItems.length}
+              pageSize={pageSize}
+              onPageChange={setPage}
+              onPageSizeChange={setPageSize}
+              pageSizeOptions={[10, 15, 25, 50]}
+            />
+          </div>
+        )}
       </div>
     </div>
   );
 };
+
+export const ProfitMarginHeatmapModule = React.memo(ProfitMarginHeatmapModuleComponent);

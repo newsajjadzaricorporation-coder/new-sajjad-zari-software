@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { AppProvider } from './context/AppProvider';
+import { LanguageProvider } from './context/LanguageContext';
 import './index.css';
 
 // Startup logging for diagnostics
@@ -12,7 +13,9 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ErrorBoundary>
       <AppProvider>
-        <App />
+        <LanguageProvider>
+          <App />
+        </LanguageProvider>
       </AppProvider>
     </ErrorBoundary>
   </StrictMode>

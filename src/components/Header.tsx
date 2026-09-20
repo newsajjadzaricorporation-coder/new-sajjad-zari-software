@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Sparkles,
   Wifi,
@@ -24,10 +24,16 @@ import {
   KeyRound,
   Sun,
   Moon,
+  Settings,
+  Cloud,
+  Clock,
+  Globe,
 } from 'lucide-react';
 import { UserProfile, ShopSettings } from '../types';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 import { useApp } from '../context/AppProvider';
+import { useLanguage } from '../context/LanguageContext';
+import { SyncDiagnostics } from './SyncDiagnostics';
 
 interface HeaderProps {
   currentUser: UserProfile;
@@ -41,6 +47,7 @@ interface HeaderProps {
   onOpenLoginModal: () => void;
   onLogout: () => void;
   onLockTerminal: () => void;
+  onOpenSettings?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -55,6 +62,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenLoginModal,
   onLogout,
   onLockTerminal,
+  onOpenSettings,
 }) => {
   const {
     isOnline,
@@ -62,14 +70,26 @@ export const Header: React.FC<HeaderProps> = ({
     isSyncing,
     lastSyncTime,
     isCheckingSync,
+    pendingRecordsCount,
     checkSyncNow,
   } = useApp();
+  const { language, toggleLanguage, t, isUrdu } = useLanguage();
   const { isInstallable, install } = usePWAInstall();
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
 
   const isSyncInProgress = isSyncing || isCheckingSync;
   const isServerSynced = isOnline && (firestoreStatus === 'connected' || firestoreStatus === 'offline_cache') && !isSyncInProgress;
+
+  // Formatted last sync time string
+  const formattedSyncTime = useMemo(() => {
+    if (!lastSyncTime) return null;
+    return lastSyncTime.toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+  }, [lastSyncTime]);
 
   return (
     <header className="sticky top-0 z-30 bg-slate-950/90 backdrop-blur-md border-b border-slate-800">
@@ -86,7 +106,7 @@ export const Header: React.FC<HeaderProps> = ({
                   {settings.shopName}
                 </h1>
                 <span className="hidden sm:inline-block px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                  RETAIL & WHOLESALE
+                  {t('retailWholesale', 'RETAIL & WHOLESALE')}
                 </span>
               </div>
               <p className="font-urdu text-xs text-amber-400/90 leading-none mt-1">
@@ -97,17 +117,26 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Quick Action Badges & RBAC Switcher */}
           <div className="flex items-center gap-2 sm:gap-3">
-            {/* Interactive Firestore Sync & Diagnostic Status Badge */}
+            {/* Interactive Firestore Sync & Diagnostic Status Badge with Pending Count */}
             <button
+              type="button"
               onClick={() => setShowDiagnostics(!showDiagnostics)}
               className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border transition cursor-pointer hover:opacity-90 ${
                 isSyncInProgress
-                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 shadow-sm shadow-amber-500/10'
+                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 shadow-sm shadow-amber-500/10 ring-1 ring-amber-400/30'
                   : !isOnline
                   ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
                   : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:border-emerald-500/50'
               }`}
-              title="Click to inspect Firestore cloud sync & local cache diagnostic details"
+              title={
+                isSyncInProgress
+                  ? 'Syncing... (Reconciling local OfflineDB with Cloud Firestore in real-time) • Click for Diagnostics'
+                  : !isOnline
+                  ? `Offline Mode: Operating safely on local persistent cache. ${pendingRecordsCount} record(s) pending sync to cloud. Click for Diagnostics`
+                  : `Firestore Connected & Synced • Last Synced: ${
+                      formattedSyncTime || 'Active'
+                    } • Click for Diagnostics`
+              }
             >
               {isSyncInProgress ? (
                 <>
@@ -116,22 +145,45 @@ export const Header: React.FC<HeaderProps> = ({
                     <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
                   </span>
                   <RefreshCw className="w-3.5 h-3.5 text-amber-400 animate-spin" />
-                  <span className="hidden sm:inline">Syncing...</span>
-                  <span className="sm:hidden">Sync</span>
+                  <span className="hidden sm:inline font-bold text-amber-300">Syncing...</span>
+                  <span className="sm:hidden font-bold text-amber-300">Sync</span>
                 </>
               ) : !isOnline ? (
                 <>
                   <WifiOff className="w-3.5 h-3.5 text-amber-400" />
-                  <span className="hidden sm:inline">Offline (Cache Active)</span>
-                  <span className="sm:hidden">Offline</span>
+                  <span className="hidden sm:inline">
+                    Offline ({pendingRecordsCount} pending)
+                  </span>
+                  <span className="sm:hidden">
+                    Offline ({pendingRecordsCount})
+                  </span>
                 </>
               ) : (
                 <>
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-sm shadow-emerald-400/50" />
-                  <span className="hidden sm:inline">Cache Synced</span>
-                  <span className="sm:hidden">Synced</span>
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-40"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400 shadow-sm shadow-emerald-400/50"></span>
+                  </span>
+                  <Cloud className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="hidden sm:inline">
+                    Synced {formattedSyncTime ? formattedSyncTime : 'Online'}
+                  </span>
+                  <span className="sm:hidden">
+                    {formattedSyncTime ? formattedSyncTime : 'Synced'}
+                  </span>
                 </>
               )}
+            </button>
+
+            {/* Language Switcher Button (English / Urdu) */}
+            <button
+              type="button"
+              onClick={toggleLanguage}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold transition bg-slate-900 border border-slate-800 hover:border-amber-500/40 text-amber-300 shadow-sm cursor-pointer"
+              title={language === 'en' ? 'اردو میں تبدیل کریں (Switch to Urdu)' : 'Switch to English'}
+            >
+              <Globe className="w-3.5 h-3.5 text-amber-400" />
+              <span className="tracking-wide">{language === 'en' ? 'اردو' : 'English'}</span>
             </button>
 
             {/* PWA Install Button */}
@@ -178,6 +230,17 @@ export const Header: React.FC<HeaderProps> = ({
                 <VolumeX className="w-4 h-4" />
               )}
             </button>
+
+            {/* Shop Settings Quick Button */}
+            {onOpenSettings && (
+              <button
+                onClick={onOpenSettings}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-amber-400 bg-slate-900 border border-slate-800 hover:border-slate-700 transition cursor-pointer"
+                title="Shop Settings & POS Preferences (Address, Receipts, Goals)"
+              >
+                <Settings className="w-4 h-4" />
+              </button>
+            )}
 
             {/* Daily Closing Z-Report Quick Button */}
             <button
@@ -304,6 +367,19 @@ export const Header: React.FC<HeaderProps> = ({
                       </span>
                     </button>
 
+                    {onOpenSettings && (
+                      <button
+                        onClick={() => {
+                          setShowUserMenu(false);
+                          onOpenSettings();
+                        }}
+                        className="w-full px-3 py-2 text-left text-xs font-medium text-slate-300 hover:text-white hover:bg-slate-800 rounded-xl flex items-center gap-2 transition cursor-pointer"
+                      >
+                        <Settings className="w-3.5 h-3.5 text-amber-400" />
+                        Shop Settings & POS Preferences
+                      </button>
+                    )}
+
                     <button
                       onClick={() => {
                         setShowUserMenu(false);
@@ -353,117 +429,11 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       </div>
 
-      {/* Floating Firestore Diagnostics Modal / Flyout */}
-      {showDiagnostics && (
-        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-            <div className="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between bg-slate-950/60">
-              <div className="flex items-center gap-2">
-                <Server className="w-5 h-5 text-amber-400" />
-                <h3 className="text-sm font-bold text-white">Firestore Sync & Cache Diagnostics</h3>
-              </div>
-              <button
-                onClick={() => setShowDiagnostics(false)}
-                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="p-5 space-y-4 text-xs">
-              {/* Status Overview Card */}
-              <div
-                className={`p-3.5 rounded-xl border flex items-center justify-between ${
-                  isServerSynced
-                    ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'
-                    : isOnline
-                    ? 'bg-blue-500/10 border-blue-500/20 text-blue-300'
-                    : 'bg-amber-500/10 border-amber-500/20 text-amber-300'
-                }`}
-              >
-                <div className="flex items-center gap-2.5">
-                  {isServerSynced ? (
-                    <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
-                  ) : (
-                    <Database className="w-5 h-5 text-blue-400 shrink-0" />
-                  )}
-                  <div>
-                    <p className="font-bold text-white">
-                      {isServerSynced
-                        ? 'Server & Local Cache In Sync'
-                        : isOnline
-                        ? 'Local Cache Active (Fast Offline-First)'
-                        : 'Offline Mode (Local Storage Synced)'}
-                    </p>
-                    <p className="text-[11px] opacity-80 mt-0.5">
-                      {isServerSynced
-                        ? 'Connected to Cloud Firestore live server database'
-                        : 'Local IndexedDB cache preserving all transactions safely'}
-                    </p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => checkSyncNow()}
-                  disabled={isCheckingSync}
-                  className="p-2 rounded-lg bg-slate-900/80 hover:bg-slate-800 border border-slate-700 text-slate-200 transition disabled:opacity-50 shrink-0"
-                  title="Force Sync Check"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isCheckingSync ? 'animate-spin' : ''}`} />
-                </button>
-              </div>
-
-              {/* Technical Specifications */}
-              <div className="space-y-2 bg-slate-950/60 p-3.5 rounded-xl border border-slate-800/80">
-                <div className="flex justify-between items-center py-1 border-b border-slate-800/60">
-                  <span className="text-slate-400">Database Engine</span>
-                  <span className="font-mono font-medium text-slate-200">Google Cloud Firestore</span>
-                </div>
-                <div className="flex justify-between items-center py-1 border-b border-slate-800/60">
-                  <span className="text-slate-400">Firebase Project ID</span>
-                  <span className="font-mono font-medium text-amber-300">new-sajjad-zari-corporation</span>
-                </div>
-                <div className="flex justify-between items-center py-1 border-b border-slate-800/60">
-                  <span className="text-slate-400">Cloud Region</span>
-                  <span className="font-mono font-medium text-slate-200">asia-southeast1</span>
-                </div>
-                <div className="flex justify-between items-center py-1 border-b border-slate-800/60">
-                  <span className="text-slate-400">Cache Persistence</span>
-                  <span className="font-mono font-medium text-emerald-400">IndexedDB + Multi-Tab</span>
-                </div>
-                <div className="flex justify-between items-center py-1 border-b border-slate-800/60">
-                  <span className="text-slate-400">Network State</span>
-                  <span className={`font-semibold ${isOnline ? 'text-emerald-400' : 'text-amber-400'}`}>
-                    {isOnline ? 'Online (Connected)' : 'Offline (Disconnected)'}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center py-1">
-                  <span className="text-slate-400">Last Verified Sync</span>
-                  <span className="font-mono text-slate-300">
-                    {lastSyncTime ? lastSyncTime.toLocaleTimeString() : 'At startup'}
-                  </span>
-                </div>
-              </div>
-
-              {/* Security & Reliability Summary */}
-              <div className="p-3 bg-slate-800/40 rounded-xl border border-slate-700/50 flex items-start gap-2 text-[11px] text-slate-300">
-                <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                <p>
-                  Transactions and Khata records written offline are queued in persistent browser storage and automatically reconciled upon server connection without data loss.
-                </p>
-              </div>
-
-              <div className="flex justify-end pt-1">
-                <button
-                  onClick={() => setShowDiagnostics(false)}
-                  className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-xl text-xs transition"
-                >
-                  Close Diagnostics
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Floating Firestore Diagnostics Modal */}
+      <SyncDiagnostics
+        isOpen={showDiagnostics}
+        onClose={() => setShowDiagnostics(false)}
+      />
     </header>
   );
 };

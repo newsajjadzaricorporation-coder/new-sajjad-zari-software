@@ -16,9 +16,42 @@ import {
   Layers,
   Eye,
   EyeOff,
+  CheckSquare,
 } from 'lucide-react';
 import { Product, UserProfile, UnitType } from '../../types';
 import { OfflineDB } from '../../services/db';
+import { CSVBulkImportModal } from './CSVBulkImportModal';
+import { PaginationControls } from '../common/PaginationControls';
+import { TableSkeleton } from '../common/SkeletonLoaders';
+import { exportToCSV } from '../../utils/csvExport';
+import { ActionLoaderModal, ActionLoaderState } from '../common/ActionLoaderModal';
+import { useLanguage } from '../../context/LanguageContext';
+
+function highlightMatch(text?: string | null, query?: string): React.ReactNode {
+  if (!text) return null;
+  const trimmed = (query || '').trim();
+  if (!trimmed) return text;
+  const escaped = trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const regex = new RegExp(`(${escaped})`, 'gi');
+  const parts = text.split(regex);
+  if (parts.length <= 1) return text;
+  return (
+    <>
+      {parts.map((part, index) =>
+        regex.test(part) ? (
+          <mark
+            key={index}
+            className="bg-amber-400 text-slate-950 font-black px-1 py-0.5 rounded shadow-sm"
+          >
+            {part}
+          </mark>
+        ) : (
+          part
+        )
+      )}
+    </>
+  );
+}
 
 interface InventoryModuleProps {
   products: Product[];
@@ -26,7 +59,7 @@ interface InventoryModuleProps {
   onRefreshProducts: () => void;
 }
 
-export const InventoryModule: React.FC<InventoryModuleProps> = ({
+const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
   products,
   currentUser,
   onRefreshProducts,
@@ -36,9 +69,30 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [stockFilter, setStockFilter] = useState<'all' | 'low' | 'out'>('all');
 
+  // Action Loader / Progress Modal state
+  const [actionLoader, setActionLoader] = useState<ActionLoaderState>({
+    isOpen: false,
+    title: '',
+    currentCount: 0,
+    totalCount: 0,
+    status: 'idle',
+    actionIcon: 'delete',
+  });
+
+  // Pagination State
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+
   // Modal State
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Partial<Product> | null>(null);
+
+  // Quick Adjust & Delete Modal States
+  const [quickAdjustProduct, setQuickAdjustProduct] = useState<Product | null>(null);
+  const [customAdjustValue, setCustomAdjustValue] = useState<string>('');
+  const [productToDelete, setProductToDelete] = useState<Product | null>(null);
+  const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
+  const [isBatchDeleteModalOpen, setIsBatchDeleteModalOpen] = useState(false);
 
   // CSV Import State
   const [isCsvModalOpen, setIsCsvModalOpen] = useState(false);
@@ -95,6 +149,46 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
       return matchCat && matchSearch && matchStock;
     });
   }, [products, selectedCategory, searchQuery, stockFilter]);
+
+  // Paginated products slice for instantaneous UI rendering
+  const paginatedProducts = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return filteredProducts.slice(start, start + pageSize);
+  }, [filteredProducts, currentPage, pageSize]);
+
+  // Export Selected Products (.CSV)
+  const handleExportSelected = () => {
+    const selectedItems = products.filter((p) => selectedProductIds.includes(p.id));
+    if (selectedItems.length === 0) return;
+
+    const headers = [
+      'SKU',
+      'Product Name',
+      'Urdu Name',
+      'Category',
+      'Cost Price (Rs)',
+      'Selling Price (Rs)',
+      'Current Stock',
+      'Unit',
+      'Barcode',
+      'Min Stock Alert',
+    ];
+
+    const rows = selectedItems.map((p) => [
+      p.sku,
+      p.name,
+      p.urduName || '',
+      p.category,
+      p.costPrice || 0,
+      p.sellingPrice,
+      p.stock,
+      p.unit,
+      p.barcode,
+      p.minStockAlert,
+    ]);
+
+    exportToCSV(`selected_inventory_${Date.now()}`, headers, rows);
+  };
 
   // Quick Stock Adjustment (+/- 1, 5, 10)
   const handleQuickStock = (productId: string, delta: number) => {
@@ -154,16 +248,144 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
     onRefreshProducts();
   };
 
-  // Delete Product
-  const handleDeleteProduct = (productId: string) => {
-    if (!isAdmin) {
-      alert('Only administrators can delete inventory products.');
+  // Delete Product with custom in-app confirmation
+  const handleDeleteProduct = (product: Product) => {
+    setProductToDelete(product);
+  };
+
+  const confirmDeleteProduct = () => {
+    if (!productToDelete) return;
+    OfflineDB.deleteProduct(productToDelete.id, currentUser?.email || 'admin');
+    setSelectedProductIds((prev) => prev.filter((id) => id !== productToDelete.id));
+    if (editingProduct && editingProduct.id === productToDelete.id) {
+      setIsEditModalOpen(false);
+      setEditingProduct(null);
+    }
+    setProductToDelete(null);
+    onRefreshProducts();
+  };
+
+  // Multi-Select Handlers
+  const handleToggleSelectProduct = (productId: string) => {
+    setSelectedProductIds((prev) =>
+      prev.includes(productId) ? prev.filter((id) => id !== productId) : [...prev, productId]
+    );
+  };
+
+  const handleToggleSelectAll = () => {
+    const pageIds = paginatedProducts.map((p) => p.id);
+    const areAllPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedProductIds.includes(id));
+    if (areAllPageSelected) {
+      setSelectedProductIds((prev) => prev.filter((id) => !pageIds.includes(id)));
+    } else {
+      setSelectedProductIds((prev) => Array.from(new Set([...prev, ...pageIds])));
+    }
+  };
+
+  const handleSelectAllFiltered = () => {
+    const allFilteredIds = filteredProducts.map((p) => p.id);
+    setSelectedProductIds(allFilteredIds);
+  };
+
+  const handleOpenBatchDelete = () => {
+    if (selectedProductIds.length === 0) return;
+    setIsBatchDeleteModalOpen(true);
+  };
+
+  const confirmBatchDelete = async () => {
+    if (selectedProductIds.length === 0) return;
+    const count = selectedProductIds.length;
+    setIsBatchDeleteModalOpen(false);
+
+    setActionLoader({
+      isOpen: true,
+      title: 'Batch Deleting Products',
+      description: `Purging ${count} selected records from database and updating indexes...`,
+      currentCount: 0,
+      totalCount: count,
+      status: 'running',
+      actionIcon: 'delete',
+    });
+
+    try {
+      await OfflineDB.batchDeleteProductsAsync(
+        selectedProductIds,
+        currentUser?.email || 'admin',
+        (processed, total) => {
+          setActionLoader((prev) => ({
+            ...prev,
+            currentCount: processed,
+            totalCount: total,
+          }));
+        }
+      );
+
+      setSelectedProductIds([]);
+      setActionLoader((prev) => ({
+        ...prev,
+        status: 'completed',
+        description: `Successfully deleted ${count} items without UI latency.`,
+      }));
+
+      onRefreshProducts();
+
+      setTimeout(() => {
+        setActionLoader((prev) => ({ ...prev, isOpen: false }));
+      }, 1400);
+    } catch (err: any) {
+      setActionLoader((prev) => ({
+        ...prev,
+        status: 'error',
+        errorMessage: err?.message || 'Failed to complete batch deletion.',
+      }));
+    }
+  };
+
+  // Export Low-Stock Report (.CSV)
+  const handleExportLowStockReport = () => {
+    const lowStockItems = products.filter((p) => p.stock <= p.minStockAlert);
+    if (lowStockItems.length === 0) {
+      alert('Great news! No inventory items are currently below minimum alert threshold.');
       return;
     }
-    if (confirm('Are you sure you want to permanently delete this product?')) {
-      OfflineDB.deleteProduct(productId, currentUser.email);
-      onRefreshProducts();
-    }
+    const headers = [
+      'SKU',
+      'Product Name',
+      'Urdu Name',
+      'Category',
+      'Current Stock',
+      'Min Alert Threshold',
+      'Unit',
+      'Shortage Qty',
+      'Purchase Cost (Rs)',
+      'Selling Price (Rs)',
+      'Urgent Reorder Status',
+    ];
+    const rows = lowStockItems.map((p) => [
+      `"${p.sku}"`,
+      `"${p.name.replace(/"/g, '""')}"`,
+      `"${(p.urduName || '').replace(/"/g, '""')}"`,
+      `"${p.category}"`,
+      p.stock,
+      p.minStockAlert,
+      `"${p.unit}"`,
+      Math.max(0, p.minStockAlert - p.stock),
+      p.costPrice,
+      p.sellingPrice,
+      `"${p.stock <= 0 ? 'OUT OF STOCK' : 'LOW STOCK'}"`,
+    ]);
+    const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute(
+      'download',
+      `Sajjad_Zari_Low_Stock_Report_${new Date().toISOString().slice(0, 10)}.csv`
+    );
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   // CSV Export
@@ -216,12 +438,26 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {/* Export Low-Stock Report Button */}
+            <button
+              onClick={handleExportLowStockReport}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition border ${
+                metrics.lowStockCount > 0 || metrics.outOfStockCount > 0
+                  ? 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border-amber-500/40 shadow-sm'
+                  : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
+              }`}
+              title="Export low stock & out-of-stock items report"
+            >
+              <AlertTriangle className={`w-4 h-4 ${metrics.lowStockCount > 0 ? 'text-amber-400' : 'text-slate-400'}`} />
+              Export Low-Stock Report ({metrics.lowStockCount + metrics.outOfStockCount})
+            </button>
+
             <button
               onClick={handleExportCSV}
               className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-semibold transition"
             >
               <Download className="w-4 h-4 text-emerald-400" />
-              Export CSV
+              Export Catalog CSV
             </button>
 
             {isAdmin && (
@@ -314,7 +550,10 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
                 {metrics.lowStockCount} Low
               </button>
               <button
-                onClick={() => setStockFilter(stockFilter === 'out' ? 'all' : 'out')}
+                onClick={() => {
+                  setStockFilter(stockFilter === 'out' ? 'all' : 'out');
+                  setCurrentPage(1);
+                }}
                 className={`px-2 py-1 rounded-lg text-xs font-bold transition flex items-center gap-1 ${
                   stockFilter === 'out'
                     ? 'bg-red-500 text-white'
@@ -336,18 +575,39 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
           <input
             type="text"
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search by product name, SKU, or barcode..."
-            className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-9 pr-4 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-amber-400"
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              setCurrentPage(1);
+            }}
+            placeholder="Search by product name, Urdu name, SKU, or barcode (matching rows will be highlighted)..."
+            className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-9 pr-24 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-amber-400"
           />
+          {searchQuery.trim().length > 0 && (
+            <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                {filteredProducts.length} highlighted
+              </span>
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="p-1 rounded text-slate-400 hover:text-white cursor-pointer"
+                title="Clear search"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="flex items-center gap-2 w-full sm:w-auto">
           <select
             aria-label="Filter Category"
             value={selectedCategory}
-            onChange={(e) => setSelectedCategory(e.target.value)}
-            className="flex-1 sm:flex-none bg-slate-900 border border-slate-800 text-slate-300 text-xs rounded-xl px-3 py-2 focus:outline-none focus:border-amber-400"
+            onChange={(e) => {
+              setSelectedCategory(e.target.value);
+              setCurrentPage(1);
+            }}
+            className="flex-1 sm:flex-none bg-slate-900 border border-slate-800 text-slate-300 text-xs rounded-xl px-3 py-2 focus:outline-none focus:border-amber-400 cursor-pointer"
           >
             {categories.map((c) => (
               <option key={c} value={c}>
@@ -358,8 +618,11 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
 
           {stockFilter !== 'all' && (
             <button
-              onClick={() => setStockFilter('all')}
-              className="text-xs px-2.5 py-2 bg-slate-800 text-slate-300 hover:text-white rounded-xl"
+              onClick={() => {
+                setStockFilter('all');
+                setCurrentPage(1);
+              }}
+              className="text-xs px-2.5 py-2 bg-slate-800 text-slate-300 hover:text-white rounded-xl cursor-pointer"
             >
               Reset Filter
             </button>
@@ -367,12 +630,68 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
         </div>
       </div>
 
+      {/* Multi-Select Floating / Sticky Action Bar */}
+      {selectedProductIds.length > 0 && (
+        <div className="bg-amber-500/10 border border-amber-500/30 p-3 rounded-2xl flex flex-wrap items-center justify-between gap-3 text-xs shadow-lg animate-in fade-in">
+          <div className="flex items-center gap-2">
+            <span className="w-6 h-6 rounded-full bg-amber-500 text-slate-950 font-black flex items-center justify-center text-xs">
+              {selectedProductIds.length}
+            </span>
+            <span className="font-bold text-white">
+              {selectedProductIds.length} product{selectedProductIds.length > 1 ? 's' : ''} selected
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleExportSelected}
+              className="px-3.5 py-1.5 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 rounded-xl font-bold flex items-center gap-1.5 shadow-md transition cursor-pointer"
+              title="Export selected products to CSV spreadsheet"
+            >
+              <Download className="w-3.5 h-3.5" />
+              Export Selected ({selectedProductIds.length})
+            </button>
+            <button
+              onClick={() => setSelectedProductIds([])}
+              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-semibold transition cursor-pointer"
+            >
+              Deselect All
+            </button>
+            <button
+              onClick={handleOpenBatchDelete}
+              className="px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold flex items-center gap-1.5 shadow-lg shadow-red-600/20 transition cursor-pointer"
+              title="Delete all selected products from inventory"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Delete Selected ({selectedProductIds.length})
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Inventory Products Table */}
       <div className="bg-slate-950/80 rounded-2xl border border-slate-800 overflow-hidden shadow-xl">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse text-xs">
             <thead>
               <tr className="bg-slate-900/90 text-slate-400 border-b border-slate-800 uppercase tracking-wider font-semibold">
+                <th className="p-3.5 w-10 text-center">
+                  <input
+                    type="checkbox"
+                    checked={
+                      paginatedProducts.length > 0 &&
+                      paginatedProducts.every((p) => selectedProductIds.includes(p.id))
+                    }
+                    onChange={handleToggleSelectAll}
+                    aria-label="Select Products on this page"
+                    title={
+                      paginatedProducts.length > 0 && paginatedProducts.every((p) => selectedProductIds.includes(p.id))
+                        ? 'Deselect all on this page'
+                        : 'Select all on this page'
+                    }
+                    className="rounded border-slate-700 text-amber-500 focus:ring-amber-400 w-4 h-4 bg-slate-800 cursor-pointer"
+                  />
+                </th>
                 <th className="p-3.5">Product / Urdu Name</th>
                 <th className="p-3.5">Category</th>
                 <th className="p-3.5">SKU & Barcode</th>
@@ -384,17 +703,50 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
-              {filteredProducts.map((p) => {
+              {paginatedProducts.length === 0 ? (
+                <tr>
+                  <td colSpan={isAdmin ? 9 : 8} className="p-8 text-center text-slate-500">
+                    No inventory products found matching your current filter.
+                  </td>
+                </tr>
+              ) : (
+                paginatedProducts.map((p) => {
                 const isOutOfStock = p.stock <= 0;
                 const isLow = p.stock > 0 && p.stock <= p.minStockAlert;
+                const isSelected = selectedProductIds.includes(p.id);
+                const isSearchActive = searchQuery.trim().length > 0;
 
                 return (
-                  <tr key={p.id} className="hover:bg-slate-900/50 transition group">
+                  <tr
+                    key={p.id}
+                    className={`transition group ${
+                      isSelected
+                        ? 'bg-amber-500/20 hover:bg-amber-500/25'
+                        : isSearchActive
+                        ? 'bg-amber-500/10 border-l-4 border-l-amber-400 hover:bg-amber-500/15 shadow-sm'
+                        : 'hover:bg-slate-900/50'
+                    }`}
+                  >
+                    {/* Checkbox */}
+                    <td className="p-3.5 text-center">
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => handleToggleSelectProduct(p.id)}
+                        aria-label={`Select ${p.name}`}
+                        className="rounded border-slate-700 text-amber-500 focus:ring-amber-400 w-4 h-4 bg-slate-800 cursor-pointer"
+                      />
+                    </td>
+
                     {/* Name */}
                     <td className="p-3.5">
-                      <div className="font-bold text-white text-sm">{p.name}</div>
+                      <div className="font-bold text-white text-sm">
+                        {highlightMatch(p.name, searchQuery)}
+                      </div>
                       {p.urduName && (
-                        <div className="font-urdu text-amber-400/90 text-xs mt-0.5">{p.urduName}</div>
+                        <div className="font-urdu text-amber-400/90 text-xs mt-0.5">
+                          {highlightMatch(p.urduName, searchQuery)}
+                        </div>
                       )}
                       {p.notes && <div className="text-[11px] text-slate-500 italic mt-0.5">{p.notes}</div>}
                     </td>
@@ -404,8 +756,12 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
 
                     {/* SKU & Barcode */}
                     <td className="p-3.5 font-mono">
-                      <div className="text-amber-300/90 font-semibold">{p.sku}</div>
-                      <div className="text-[11px] text-slate-500">{p.barcode}</div>
+                      <div className="text-amber-300/90 font-semibold">
+                        {highlightMatch(p.sku, searchQuery)}
+                      </div>
+                      <div className="text-[11px] text-slate-500">
+                        {highlightMatch(p.barcode, searchQuery)}
+                      </div>
                     </td>
 
                     {/* Cost (Admin Only) */}
@@ -436,29 +792,33 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
                       </span>
                     </td>
 
-                    {/* Quick Stock Controls */}
+                    {/* Quick Stock Controls & Popover */}
                     <td className="p-3.5 text-center">
-                      <div className="inline-flex items-center gap-1 bg-slate-900 p-1 rounded-lg border border-slate-800">
+                      <div className="inline-flex items-center gap-1.5 bg-slate-900/90 p-1 rounded-xl border border-slate-800">
                         <button
                           onClick={() => handleQuickStock(p.id, -1)}
-                          className="w-6 h-6 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center font-bold"
-                          title="-1"
+                          className="w-6 h-6 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center font-bold text-xs"
+                          title="Quick -1 unit"
                         >
                           -1
                         </button>
                         <button
                           onClick={() => handleQuickStock(p.id, 1)}
-                          className="w-6 h-6 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center font-bold"
-                          title="+1"
+                          className="w-6 h-6 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center font-bold text-xs"
+                          title="Quick +1 unit"
                         >
                           +1
                         </button>
                         <button
-                          onClick={() => handleQuickStock(p.id, 5)}
-                          className="w-6 h-6 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 flex items-center justify-center font-bold text-[10px]"
-                          title="+5"
+                          onClick={() => {
+                            setQuickAdjustProduct(p);
+                            setCustomAdjustValue(p.stock.toString());
+                          }}
+                          className="px-2 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 font-bold text-[11px] flex items-center gap-1 transition"
+                          title="Open Quick Adjust stock dialog"
                         >
-                          +5
+                          <Layers className="w-3 h-3" />
+                          Adjust
                         </button>
                       </div>
                     </td>
@@ -473,23 +833,35 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
                         >
                           <Edit2 className="w-4 h-4" />
                         </button>
-                        {isAdmin && (
-                          <button
-                            onClick={() => handleDeleteProduct(p.id)}
-                            className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-slate-800 rounded-lg transition"
-                            title="Delete Product"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        )}
+                        <button
+                          onClick={() => handleDeleteProduct(p)}
+                          className="p-1.5 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition border border-transparent hover:border-red-500/20 cursor-pointer"
+                          title="Delete Product"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       </div>
                     </td>
                   </tr>
                 );
-              })}
+              }))}
             </tbody>
           </table>
         </div>
+
+        {/* Local Pagination Controls */}
+        <PaginationControls
+          currentPage={currentPage}
+          totalItems={filteredProducts.length}
+          pageSize={pageSize}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={(newSize) => {
+            setPageSize(newSize);
+            setCurrentPage(1);
+          }}
+          pageSizeOptions={[15, 25, 50, 100]}
+          itemName="products"
+        />
       </div>
 
       {/* ================= ADD / EDIT PRODUCT MODAL ================= */}
@@ -651,115 +1023,248 @@ export const InventoryModule: React.FC<InventoryModuleProps> = ({
                 />
               </div>
 
-              <div className="flex justify-end gap-2 pt-4 border-t border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => setIsEditModalOpen(false)}
-                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-xl shadow-lg shadow-amber-500/20"
-                >
-                  Save Product
-                </button>
+              <div className="flex items-center justify-between gap-2 pt-4 border-t border-slate-800">
+                {editingProduct && editingProduct.id && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const prod = products.find((p) => p.id === editingProduct.id);
+                      if (prod) {
+                        setProductToDelete(prod);
+                      }
+                    }}
+                    className="px-3.5 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
+                    title="Permanently remove this product from inventory"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Delete Product
+                  </button>
+                )}
+                <div className="flex items-center gap-2 ml-auto">
+                  <button
+                    type="button"
+                    onClick={() => setIsEditModalOpen(false)}
+                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-xl shadow-lg shadow-amber-500/20 text-xs cursor-pointer"
+                  >
+                    Save Product
+                  </button>
+                </div>
               </div>
             </form>
           </div>
         </div>
       )}
 
-      {/* ================= CSV BULK IMPORT MODAL ================= */}
-      {isCsvModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 overflow-y-auto">
-          <div className="relative w-full max-w-xl bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl p-6 my-6 space-y-4">
+      {/* ================= CSV BULK IMPORT MODAL WITH PRE-COMMIT VALIDATION ================= */}
+      <CSVBulkImportModal
+        isOpen={isCsvModalOpen}
+        onClose={() => setIsCsvModalOpen(false)}
+        currentUser={currentUser}
+        onSuccess={() => {
+          onRefreshProducts();
+        }}
+      />
+
+      {/* ================= QUICK ADJUST STOCK MODAL ================= */}
+      {quickAdjustProduct && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="relative w-full max-w-sm bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl p-5 space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <FileSpreadsheet className="w-5 h-5 text-emerald-400" />
-                Bulk CSV Inventory Import
-              </h3>
-              <button onClick={() => setIsCsvModalOpen(false)} className="text-slate-400 hover:text-white">
+              <div>
+                <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
+                  <Layers className="w-4 h-4 text-amber-400" />
+                  Quick Adjust Stock Level
+                </h3>
+                <p className="text-[11px] text-slate-400 mt-0.5 truncate max-w-[220px]">
+                  {quickAdjustProduct.name}
+                </p>
+              </div>
+              <button
+                onClick={() => setQuickAdjustProduct(null)}
+                className="text-slate-400 hover:text-white"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <p className="text-xs text-slate-400">
-              Upload or paste a CSV spreadsheet to import multiple products into the inventory database.
-              Existing SKUs will update; new ones will be created.
-            </p>
-
-            {/* File Upload Zone */}
-            <div
-              onClick={() => fileInputRef.current?.click()}
-              className="border-2 border-dashed border-slate-700 hover:border-amber-400/60 rounded-xl p-6 text-center cursor-pointer bg-slate-950/40 transition"
-            >
-              <Upload className="w-8 h-8 text-amber-400 mx-auto mb-2" />
-              <p className="text-xs font-semibold text-white">Click or drag & drop CSV file</p>
-              <p className="text-[11px] text-slate-500 mt-0.5">Supports .csv exported from Excel or Google Sheets</p>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".csv"
-                onChange={handleFileUpload}
-                className="hidden"
-              />
-            </div>
-
-            {/* CSV Raw Text Editor */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-400 mb-1">CSV Data Content:</label>
-              <textarea
-                rows={6}
-                value={csvText}
-                onChange={(e) => setCsvText(e.target.value)}
-                placeholder="ID,Name,Urdu Name,Category,SKU,Barcode,Purchase Cost,Selling Price,Stock Qty,Unit,Min Alert,Notes..."
-                className="w-full font-mono text-[11px] bg-slate-950 border border-slate-800 rounded-xl p-3 text-slate-300 focus:outline-none focus:border-amber-400"
-              />
-            </div>
-
-            {/* Result Report */}
-            {csvImportResult && (
-              <div
-                className={`p-3 rounded-xl border text-xs ${
-                  csvImportResult.successCount > 0
-                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
-                    : 'bg-red-500/10 border-red-500/30 text-red-300'
-                }`}
-              >
-                <div className="font-bold flex items-center gap-1.5">
-                  <CheckCircle2 className="w-4 h-4" />
-                  Successfully processed {csvImportResult.successCount} products!
-                </div>
-                {csvImportResult.errors.length > 0 && (
-                  <ul className="mt-1.5 list-disc list-inside text-[11px] text-slate-400">
-                    {csvImportResult.errors.slice(0, 3).map((err, idx) => (
-                      <li key={idx}>{err}</li>
-                    ))}
-                  </ul>
-                )}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between p-3 bg-slate-950 rounded-xl border border-slate-800">
+                <span className="text-xs text-slate-400">Current In-Stock:</span>
+                <span className="text-base font-black text-amber-300">
+                  {quickAdjustProduct.stock} {quickAdjustProduct.unit}
+                </span>
               </div>
-            )}
 
-            <div className="flex justify-end gap-2 pt-3 border-t border-slate-800">
+              {/* Quick Step Buttons */}
+              <div className="grid grid-cols-6 gap-1.5">
+                {[-10, -5, -1, 1, 5, 10].map((delta) => (
+                  <button
+                    key={delta}
+                    onClick={() => {
+                      OfflineDB.adjustStock(quickAdjustProduct.id, delta);
+                      onRefreshProducts();
+                      const updated = OfflineDB.getProducts().find((p) => p.id === quickAdjustProduct.id);
+                      if (updated) {
+                        setQuickAdjustProduct(updated);
+                        setCustomAdjustValue(updated.stock.toString());
+                      }
+                    }}
+                    className={`py-2 rounded-lg font-bold text-xs transition ${
+                      delta < 0
+                        ? 'bg-red-500/15 hover:bg-red-500/25 text-red-300 border border-red-500/30'
+                        : 'bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30'
+                    }`}
+                  >
+                    {delta > 0 ? `+${delta}` : delta}
+                  </button>
+                ))}
+              </div>
+
+              {/* Direct Stock Override Form */}
+              <div className="space-y-1.5 pt-1">
+                <label className="text-[11px] font-semibold text-slate-300">
+                  Set Exact Physical Stock Count:
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    min="0"
+                    value={customAdjustValue}
+                    onChange={(e) => setCustomAdjustValue(e.target.value)}
+                    className="flex-1 px-3 py-2 bg-slate-950 border border-slate-700 rounded-xl text-sm font-bold text-white focus:outline-none focus:border-amber-400"
+                    placeholder="Enter stock count"
+                  />
+                  <button
+                    onClick={() => {
+                      const newStock = Number(customAdjustValue);
+                      if (!isNaN(newStock) && newStock >= 0) {
+                        OfflineDB.saveProduct(
+                          { ...quickAdjustProduct, stock: newStock },
+                          currentUser.email
+                        );
+                        onRefreshProducts();
+                        setQuickAdjustProduct(null);
+                      }
+                    }}
+                    className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-xl text-xs transition"
+                  >
+                    Update
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-2 border-t border-slate-800">
               <button
-                onClick={() => setIsCsvModalOpen(false)}
-                className="px-4 py-2 bg-slate-800 text-slate-300 rounded-xl text-xs"
+                onClick={() => setQuickAdjustProduct(null)}
+                className="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs"
               >
-                Close
-              </button>
-              <button
-                disabled={!csvText.trim()}
-                onClick={handleExecuteImport}
-                className="px-5 py-2 bg-amber-500 hover:bg-amber-600 disabled:opacity-40 text-slate-950 font-bold rounded-xl text-xs shadow"
-              >
-                Process Bulk Import
+                Done
               </button>
             </div>
           </div>
         </div>
       )}
+
+      {/* ================= IN-APP DELETE PRODUCT CONFIRMATION MODAL ================= */}
+      {productToDelete && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="relative w-full max-w-md bg-slate-900 border border-red-500/40 rounded-2xl shadow-2xl p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-red-500/20 border border-red-500/30 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5 text-red-400" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Delete Product from Inventory</h3>
+                <p className="text-xs text-slate-400">This action will remove the item from local catalog</p>
+              </div>
+            </div>
+
+            <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-1 text-xs">
+              <div className="text-slate-200 font-bold">{productToDelete.name}</div>
+              {productToDelete.urduName && (
+                <div className="text-amber-300 font-urdu">{productToDelete.urduName}</div>
+              )}
+              <div className="text-slate-400 font-mono text-[11px]">
+                SKU: {productToDelete.sku} | Barcode: {productToDelete.barcode}
+              </div>
+              <div className="text-slate-400">
+                Current Stock: <span className="font-bold text-white">{productToDelete.stock} {productToDelete.unit}</span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                onClick={() => setProductToDelete(null)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDeleteProduct}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shadow-lg shadow-red-600/20"
+              >
+                Confirm Delete Product
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= IN-APP BATCH DELETE CONFIRMATION MODAL ================= */}
+      {isBatchDeleteModalOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="relative w-full max-w-md bg-slate-900 border border-red-500/40 rounded-2xl shadow-2xl p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-red-500/20 border border-red-500/30 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5 text-red-400" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Batch Delete Selected Products</h3>
+                <p className="text-xs text-slate-400">Permanently remove selected catalog items</p>
+              </div>
+            </div>
+
+            <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-2 text-xs">
+              <div className="text-slate-200 font-bold">
+                You are about to delete <span className="text-amber-400">{selectedProductIds.length}</span> selected product(s).
+              </div>
+              <p className="text-slate-400 text-[11px]">
+                This will purge these records from the local inventory and write audit log entries.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                onClick={() => setIsBatchDeleteModalOpen(false)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmBatchDelete}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shadow-lg shadow-red-600/20"
+              >
+                Delete Selected ({selectedProductIds.length})
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Global Batch Action Progress Loader */}
+      <ActionLoaderModal
+        state={actionLoader}
+        onClose={() => setActionLoader((prev) => ({ ...prev, isOpen: false }))}
+      />
     </div>
   );
 };
+
+export const InventoryModule = React.memo(InventoryModuleComponent);

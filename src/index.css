@@ -18,6 +18,23 @@
   font-family: 'JetBrains Mono', 'Courier New', Courier, monospace;
 }
 
+/* Smooth Hardware-Accelerated View Transitions */
+@keyframes viewFadeSlideIn {
+  0% {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.view-transition {
+  animation: viewFadeSlideIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: opacity, transform;
+}
+
 /* Custom Sleek Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;

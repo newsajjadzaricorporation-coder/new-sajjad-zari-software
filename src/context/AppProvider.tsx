@@ -5,6 +5,7 @@ import React, {
   useEffect,
   ReactNode,
   useCallback,
+  useMemo,
 } from 'react';
 import { db, auth, isConfigured, testFirestoreConnection } from '../services/firebase';
 import { OfflineDB } from '../services/db';
@@ -19,8 +20,13 @@ export interface AppContextType {
   lastSyncTime: Date | null;
   isCheckingSync: boolean;
   isSessionLocked: boolean;
+  pendingRecordsCount: number;
+  showSyncFailureModal: boolean;
+  setShowSyncFailureModal: (show: boolean) => void;
+  syncFailureDetails: string | null;
   setSessionLocked: (locked: boolean) => void;
   checkSyncNow: () => Promise<boolean>;
+  checkForUpdates: () => Promise<boolean>;
   retryInit: () => Promise<void>;
   validateAuthSession: () => boolean;
 }
@@ -75,6 +81,40 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
     return true;
   }, [setSessionLocked]);
 
+  const [syncFailureStartTime, setSyncFailureStartTime] = useState<number | null>(null);
+  const [hasTriggeredAutoExport, setHasTriggeredAutoExport] = useState<boolean>(false);
+  const [pendingRecordsCount, setPendingRecordsCount] = useState<number>(() =>
+    OfflineDB.getPendingSyncCount()
+  );
+  const [showSyncFailureModal, setShowSyncFailureModal] = useState<boolean>(false);
+  const [syncFailureDetails, setSyncFailureDetails] = useState<string | null>(null);
+
+  const triggerEmergencyAutoExport = useCallback(() => {
+    try {
+      console.warn('[AppProvider] Persistent sync failure exceeded 10 minutes. Triggering automatic local OfflineDB export backup...');
+      const backupJson = OfflineDB.exportFullBackup();
+      const blob = new Blob([backupJson], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `emergency-nszc-backup-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      OfflineDB.addAuditLog({
+        userEmail: 'SYSTEM_AUTOSYNC',
+        actionType: 'DATABASE_BACKUP' as any,
+        entityId: 'EMERGENCY_EXPORT',
+        details: 'Automatic emergency export triggered due to >10 minutes persistent offline sync failure.',
+      });
+      setHasTriggeredAutoExport(true);
+    } catch (e) {
+      console.error('[AppProvider] Emergency auto-export failed:', e);
+    }
+  }, []);
+
   const checkSyncNow = useCallback(async (): Promise<boolean> => {
     setIsCheckingSync(true);
     setIsSyncing(true);
@@ -84,12 +124,15 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
         if (isConnected) {
           setFirestoreStatus('connected');
           setLastSyncTime(new Date());
+          setSyncFailureStartTime(null);
+          setHasTriggeredAutoExport(false);
           setIsCheckingSync(false);
           setIsSyncing(false);
           return true;
         } else {
           setFirestoreStatus('offline_cache');
           setLastSyncTime(new Date());
+          setSyncFailureStartTime((prev) => prev || Date.now());
           setIsCheckingSync(false);
           setIsSyncing(false);
           return false;
@@ -97,17 +140,60 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
       } else {
         setFirestoreStatus('offline_cache');
         setLastSyncTime(new Date());
+        setSyncFailureStartTime((prev) => prev || Date.now());
         setIsCheckingSync(false);
         setIsSyncing(false);
         return false;
       }
     } catch {
       setFirestoreStatus('offline_cache');
+      setSyncFailureStartTime((prev) => prev || Date.now());
       setIsCheckingSync(false);
       setIsSyncing(false);
       return false;
     }
   }, []);
+
+  const checkForUpdates = useCallback(async (): Promise<boolean> => {
+    // Only execute when device detects an active network connection
+    const onlineNow = typeof navigator !== 'undefined' ? navigator.onLine : isOnline;
+    if (!onlineNow) {
+      console.info('[AppProvider] Update check skipped: device is currently offline.');
+      return false;
+    }
+
+    setIsCheckingSync(true);
+    try {
+      if (isConfigured && db) {
+        const isConnected = await testFirestoreConnection();
+        if (isConnected) {
+          setFirestoreStatus('connected');
+          setLastSyncTime(new Date());
+          setSyncFailureStartTime(null);
+          setHasTriggeredAutoExport(false);
+
+          // Reconcile cross-tab or background data if needed
+          const currentUser = OfflineDB.getCurrentUser();
+          if (currentUser) {
+            OfflineDB.broadcast('SYNC_RECONCILED', { timestamp: Date.now() });
+          }
+          return true;
+        } else {
+          setFirestoreStatus('offline_cache');
+          return false;
+        }
+      } else {
+        setFirestoreStatus('offline_cache');
+        return false;
+      }
+    } catch (err) {
+      console.warn('[AppProvider] Reconciliation check error:', err);
+      setFirestoreStatus('offline_cache');
+      return false;
+    } finally {
+      setIsCheckingSync(false);
+    }
+  }, [isOnline]);
 
   const initSystem = async () => {
     console.info('[AppProvider] Initializing New Sajjad Zari Corporation Cloud & Local Core...');
@@ -198,16 +284,26 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
     window.addEventListener('offline', handleOffline);
 
     // Subscribe to cross-tab lock and sync messages
-    const unsubscribeSync = OfflineDB.onSyncUpdate(() => {
+    const unsubscribeSync = OfflineDB.onSyncUpdate((type) => {
       setIsSessionLockedState(OfflineDB.isSessionLocked());
+      setPendingRecordsCount(OfflineDB.getPendingSyncCount());
     });
 
-    // Periodic heartbeat sync check every 60s
+    // Periodic active-network polling mechanism to reconcile local OfflineDB with Firestore
     const syncInterval = setInterval(() => {
-      if (navigator.onLine && isConfigured) {
-        checkSyncNow();
+      // Triggered only when the device detects an active network connection
+      if (typeof navigator !== 'undefined' && navigator.onLine) {
+        checkForUpdates();
       }
-    }, 60000);
+
+      // Check if persistent sync failure exceeded 10 minutes (600,000ms)
+      if (syncFailureStartTime && !hasTriggeredAutoExport) {
+        const elapsedMs = Date.now() - syncFailureStartTime;
+        if (elapsedMs >= 10 * 60 * 1000) {
+          triggerEmergencyAutoExport();
+        }
+      }
+    }, 30000);
 
     return () => {
       window.removeEventListener('online', handleOnline);
@@ -215,25 +311,49 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
       clearInterval(syncInterval);
       unsubscribeSync();
     };
-  }, [checkSyncNow]);
+  }, [checkSyncNow, checkForUpdates]);
+
+  const contextValue = useMemo<AppContextType>(
+    () => ({
+      isInitializing,
+      isOnline,
+      firestoreStatus,
+      isSyncing,
+      errorMessage,
+      lastSyncTime,
+      isCheckingSync,
+      isSessionLocked,
+      pendingRecordsCount,
+      showSyncFailureModal,
+      setShowSyncFailureModal,
+      syncFailureDetails,
+      setSessionLocked,
+      checkSyncNow,
+      checkForUpdates,
+      retryInit: initSystem,
+      validateAuthSession,
+    }),
+    [
+      isInitializing,
+      isOnline,
+      firestoreStatus,
+      isSyncing,
+      errorMessage,
+      lastSyncTime,
+      isCheckingSync,
+      isSessionLocked,
+      pendingRecordsCount,
+      showSyncFailureModal,
+      syncFailureDetails,
+      setSessionLocked,
+      checkSyncNow,
+      checkForUpdates,
+      validateAuthSession,
+    ]
+  );
 
   return (
-    <AppContext.Provider
-      value={{
-        isInitializing,
-        isOnline,
-        firestoreStatus,
-        isSyncing,
-        errorMessage,
-        lastSyncTime,
-        isCheckingSync,
-        isSessionLocked,
-        setSessionLocked,
-        checkSyncNow,
-        retryInit: initSystem,
-        validateAuthSession,
-      }}
-    >
+    <AppContext.Provider value={contextValue}>
       {children}
     </AppContext.Provider>
   );

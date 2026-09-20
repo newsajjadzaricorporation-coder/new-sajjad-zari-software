@@ -4,9 +4,11 @@ import {
   getFirestore,
   persistentLocalCache,
   persistentMultipleTabManager,
+  memoryLocalCache,
   Firestore,
   doc,
   getDocFromServer,
+  setLogLevel,
 } from 'firebase/firestore';
 import {
   initializeAuth,
@@ -17,8 +19,15 @@ import {
   signInWithPopup,
   signOut,
 } from 'firebase/auth';
-import { getAnalytics, isSupported, Analytics } from 'firebase/analytics';
-import firebaseConfig from '../../firebase-applet-config.json';
+import type { Analytics } from 'firebase/analytics';
+import rawFirebaseConfig from '../../firebase-applet-config.json';
+
+// Suppress noisy Firestore internal retry warnings when operating in offline/local cache mode
+try {
+  setLogLevel('silent');
+} catch {
+  // Ignored if not supported in environment
+}
 
 export enum OperationType {
   CREATE = 'create',
@@ -74,84 +83,116 @@ export function handleFirestoreError(
   throw new Error(JSON.stringify(errInfo));
 }
 
-let app: FirebaseApp;
-let db: Firestore;
-let auth: Auth;
+let app: FirebaseApp | null = null;
+let db: Firestore | null = null;
+let auth: Auth | null = null;
 let analytics: Analytics | null = null;
 let isConfigured = false;
 
+// Validate that Firebase configuration has valid, non-empty credentials to prevent auth/argument-error
+function isValidFirebaseConfig(cfg: any): boolean {
+  if (!cfg || typeof cfg !== 'object') return false;
+  const hasApiKey = typeof cfg.apiKey === 'string' && cfg.apiKey.trim().length > 5;
+  const hasProjectId = typeof cfg.projectId === 'string' && cfg.projectId.trim().length > 2;
+  return Boolean(hasApiKey && hasProjectId);
+}
+
 try {
-  if (!getApps().length) {
-    app = initializeApp(firebaseConfig);
-  } else {
-    app = getApps()[0];
-  }
-
-  const dbId = (firebaseConfig as any).firestoreDatabaseId;
-
-  // Configure Firestore with persistent local cache and multi-tab manager
-  try {
-    if (dbId) {
-      db = initializeFirestore(
-        app,
-        {
-          localCache: persistentLocalCache({
-            tabManager: persistentMultipleTabManager(),
-          }),
-        },
-        dbId
-      );
+  if (isValidFirebaseConfig(rawFirebaseConfig)) {
+    if (!getApps().length) {
+      app = initializeApp(rawFirebaseConfig);
     } else {
-      db = initializeFirestore(app, {
-        localCache: persistentLocalCache({
-          tabManager: persistentMultipleTabManager(),
-        }),
-      });
+      app = getApps()[0];
     }
-  } catch {
-    // If already initialized in this runtime instance
-    db = dbId ? getFirestore(app, dbId) : getFirestore(app);
-  }
 
-  // Initialize Auth with local browser persistence
-  try {
-    auth = initializeAuth(app, {
-      persistence: browserLocalPersistence,
-    });
-  } catch {
-    auth = getAuth(app);
-  }
+    const dbId = (rawFirebaseConfig as any).firestoreDatabaseId;
 
-  isConfigured = true;
-
-  // Initialize Analytics if supported in the browser
-  if (typeof window !== 'undefined' && firebaseConfig.measurementId) {
-    isSupported()
-      .then((supported) => {
-        if (supported) {
-          analytics = getAnalytics(app);
-        }
-      })
-      .catch(() => {
-        // Ignore analytics in restricted iframe/browser environments
+    // Configure Firestore with persistent local cache, multi-tab manager and long polling
+    try {
+      const cacheSetting = persistentLocalCache({
+        tabManager: persistentMultipleTabManager(),
       });
+
+      const firestoreSettings = {
+        localCache: cacheSetting,
+        experimentalForceLongPolling: true,
+        experimentalAutoDetectLongPolling: true,
+      };
+
+      if (dbId) {
+        db = initializeFirestore(app, firestoreSettings, dbId);
+      } else {
+        db = initializeFirestore(app, firestoreSettings);
+      }
+    } catch (cacheErr) {
+      console.warn('Persistent cache initialization fallback to memoryLocalCache:', cacheErr);
+      try {
+        const memorySettings = {
+          localCache: memoryLocalCache(),
+          experimentalForceLongPolling: true,
+        };
+        db = dbId ? initializeFirestore(app, memorySettings, dbId) : initializeFirestore(app, memorySettings);
+      } catch {
+        db = dbId ? getFirestore(app, dbId) : getFirestore(app);
+      }
+    }
+
+    // Initialize Auth safely with local browser persistence & argument validation
+    try {
+      auth = initializeAuth(app, {
+        persistence: browserLocalPersistence,
+      });
+    } catch (authInitErr: any) {
+      if (authInitErr?.code === 'auth/already-initialized') {
+        auth = getAuth(app);
+      } else {
+        console.warn('Fallback initializing default Auth:', authInitErr);
+        auth = getAuth(app);
+      }
+    }
+
+    isConfigured = true;
+  } else {
+    console.info('[Firebase] Valid configuration not detected. Operating securely in offline-first mode.');
+    isConfigured = false;
   }
 } catch (err) {
-  console.warn('Fallback initializing Firestore & Auth:', err);
-  app = getApps()[0] || initializeApp(firebaseConfig);
-  db = getFirestore(app);
-  auth = getAuth(app);
-  isConfigured = true;
+  console.warn('[Firebase] Graceful initialization fallback:', err);
+  if (app) {
+    try {
+      db = getFirestore(app);
+      auth = getAuth(app);
+      isConfigured = true;
+    } catch {
+      // offline-only mode
+      isConfigured = false;
+    }
+  }
 }
 
 export async function testFirestoreConnection(): Promise<boolean> {
   if (!db) return false;
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return false;
+  }
   try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
-    return true;
+    const timeoutPromise = new Promise<boolean>((resolve) =>
+      setTimeout(() => resolve(false), 2000)
+    );
+    const fetchPromise = getDocFromServer(doc(db, 'test', 'connection'))
+      .then(() => true)
+      .catch((err) => {
+        // Suppress expected offline / unreachable errors cleanly
+        if (err?.code === 'unavailable' || err?.code === 'failed-precondition' || String(err).includes('offline')) {
+          return false;
+        }
+        return false;
+      });
+
+    return await Promise.race([fetchPromise, timeoutPromise]);
   } catch (error) {
     if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.warn('Firestore client is offline or running in persistent local cache mode.');
+      console.info('Firestore client is offline or running in persistent local cache mode.');
     }
     return false;
   }
@@ -161,7 +202,7 @@ export { app, db, auth, analytics, isConfigured };
 
 export async function loginWithGoogle() {
   if (!auth) {
-    throw new Error('Firebase Auth not configured.');
+    throw new Error('Firebase Auth not configured or running in offline mode.');
   }
   const provider = new GoogleAuthProvider();
   return signInWithPopup(auth, provider);
@@ -172,5 +213,6 @@ export async function logoutUser() {
     return signOut(auth);
   }
 }
+
 
 

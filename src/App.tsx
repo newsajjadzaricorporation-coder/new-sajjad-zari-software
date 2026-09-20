@@ -28,8 +28,12 @@ import { ExpensesClosingModule } from './components/expenses/ExpensesClosingModu
 import { SecurityAuditModule } from './components/admin/SecurityAuditModule';
 import { UserGuideModule } from './components/guide/UserGuideModule';
 import { PrintReceiptModal } from './components/PrintReceiptModal';
+import { SettingsModal } from './components/SettingsModal';
 import { SplashScreen } from './components/SplashScreen';
+import { QuickStatsDashboard } from './components/dashboard/QuickStatsDashboard';
 import { useApp } from './context/AppProvider';
+import { useLanguage } from './context/LanguageContext';
+import { SyncReconciliationFailureModal } from './components/common/SyncReconciliationFailureModal';
 
 type NavTab =
   | 'pos'
@@ -44,6 +48,7 @@ type NavTab =
 
 export default function App() {
   const { isInitializing, validateAuthSession } = useApp();
+  const { t, isUrdu } = useLanguage();
 
   // System State
   const [activeTab, setActiveTab] = useState<NavTab>('pos');
@@ -55,14 +60,17 @@ export default function App() {
   const [settings, setSettings] = useState<ShopSettings>(OfflineDB.getSettings());
 
   // Safe navigation with authentication guard check
-  const handleNavClick = (tab: NavTab) => {
-    if (!validateAuthSession()) {
-      setIsLocked(true);
-      setIsLoginModalOpen(true);
-      return;
-    }
-    setActiveTab(tab);
-  };
+  const handleNavClick = useCallback(
+    (tab: NavTab) => {
+      if (!validateAuthSession()) {
+        setIsLocked(true);
+        setIsLoginModalOpen(true);
+        return;
+      }
+      setActiveTab(tab);
+    },
+    [validateAuthSession]
+  );
 
   // Theme Synchronizer
   useEffect(() => {
@@ -97,42 +105,52 @@ export default function App() {
   const [suppliers, setSuppliers] = useState<Supplier[]>(OfflineDB.getSuppliers());
   const [sales, setSales] = useState<SaleInvoice[]>(OfflineDB.getSales());
 
-  // Receipt Modal State
+  // Receipt & Settings Modal State
   const [printModalSale, setPrintModalSale] = useState<SaleInvoice | null>(null);
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
 
   // Sync Firebase Auth State
   useEffect(() => {
+    // Run automated daily backup check
+    OfflineDB.runAutomatedDailyBackup();
+
     if (!auth) return;
     try {
-      const unsubscribe = onAuthStateChanged(auth, (fbUser) => {
-        if (fbUser) {
-          const email = fbUser.email || 'newsajjadzaricorporation@gmail.com';
-          const isOwnerAdmin =
-            email === 'newsajjadzaricorporation@gmail.com' ||
-            email.includes('admin') ||
-            fbUser.uid === 'admin-sajjad-01';
+      const unsubscribe = onAuthStateChanged(
+        auth,
+        (fbUser) => {
+          if (fbUser) {
+            const email = fbUser.email || 'newsajjadzaricorporation@gmail.com';
+            const isOwnerAdmin =
+              email === 'newsajjadzaricorporation@gmail.com' ||
+              email.includes('admin') ||
+              fbUser.uid === 'admin-sajjad-01';
 
-          const users = OfflineDB.getUsers();
-          let matched = users.find((u) => u.email === email || u.uid === fbUser.uid);
-          if (!matched) {
-            matched = {
-              uid: fbUser.uid,
-              email,
-              displayName: fbUser.displayName || 'Google Admin',
-              role: isOwnerAdmin ? 'admin' : 'staff',
-              createdAt: new Date().toISOString(),
-              lastLogin: new Date().toISOString(),
-            };
-            OfflineDB.saveUser(matched, 'system');
+            const users = OfflineDB.getUsers();
+            let matched = users.find((u) => u.email === email || u.uid === fbUser.uid);
+            if (!matched) {
+              matched = {
+                uid: fbUser.uid,
+                email,
+                displayName: fbUser.displayName || 'Google Admin',
+                role: isOwnerAdmin ? 'admin' : 'staff',
+                createdAt: new Date().toISOString(),
+                lastLogin: new Date().toISOString(),
+              };
+              OfflineDB.saveUser(matched, 'system');
+            }
+            setCurrentUser(matched);
+            setAllUsers(OfflineDB.getUsers());
           }
-          setCurrentUser(matched);
-          setAllUsers(OfflineDB.getUsers());
+        },
+        (error) => {
+          console.warn('[App] Firebase Auth listener caught notice (continuing in local mode):', error);
         }
-      });
+      );
       return () => unsubscribe();
     } catch (e) {
-      console.warn('Firebase Auth State listener init note:', e);
+      console.warn('[App] Firebase Auth State listener init note:', e);
     }
   }, []);
 
@@ -192,7 +210,7 @@ export default function App() {
   }, [reloadData]);
 
   // Auth Action Handlers
-  const handleLogout = async () => {
+  const handleLogout = useCallback(async () => {
     try {
       await logoutUser();
     } catch (e) {
@@ -202,40 +220,42 @@ export default function App() {
     OfflineDB.setSessionLocked(true);
     setIsLocked(true);
     setIsLoginModalOpen(true);
-  };
+  }, [currentUser]);
 
-  const handleLockTerminal = () => {
+  const handleLockTerminal = useCallback(() => {
     OfflineDB.recordAuthEvent('LOCK', currentUser, 'Terminal Lock');
     OfflineDB.setSessionLocked(true);
     setIsLocked(true);
     setIsLoginModalOpen(true);
-  };
+  }, [currentUser]);
 
-  const handleLoginSuccess = (user: UserProfile) => {
+  const handleLoginSuccess = useCallback((user: UserProfile) => {
     setCurrentUser(user);
     setIsLocked(false);
     setIsLoginModalOpen(false);
     reloadData();
-  };
+  }, [reloadData]);
 
   // Handle completing a sale in the POS
-  const handleCompleteSale = (sale: SaleInvoice) => {
+  const handleCompleteSale = useCallback((sale: SaleInvoice) => {
     OfflineDB.recordSale(sale, currentUser.email);
     reloadData();
     // Automatically display the print receipt modal immediately
     setPrintModalSale(sale);
     setIsPrintModalOpen(true);
-  };
+  }, [currentUser.email, reloadData]);
 
   // Toggle Sound Effects
-  const handleToggleSound = () => {
-    const updated = {
-      ...settings,
-      enableSoundEffects: !settings.enableSoundEffects,
-    };
-    OfflineDB.saveSettings(updated);
-    setSettings(updated);
-  };
+  const handleToggleSound = useCallback(() => {
+    setSettings((prev) => {
+      const updated = {
+        ...prev,
+        enableSoundEffects: !prev.enableSoundEffects,
+      };
+      OfflineDB.saveSettings(updated);
+      return updated;
+    });
+  }, []);
 
   if (isInitializing) {
     return <SplashScreen statusMessage="Synchronizing local databases & multi-tab cache..." />;
@@ -259,6 +279,7 @@ export default function App() {
         onOpenLoginModal={() => setIsLoginModalOpen(true)}
         onLogout={handleLogout}
         onLockTerminal={handleLockTerminal}
+        onOpenSettings={() => setIsSettingsModalOpen(true)}
       />
 
       {/* Main Navigation Bar */}
@@ -274,7 +295,7 @@ export default function App() {
             title="Shortcuts: Ctrl+N"
           >
             <ShoppingBag className="w-4 h-4" />
-            POS & Billing
+            <span>{t('navPos', 'POS & Billing')}</span>
           </button>
 
           <button
@@ -287,7 +308,7 @@ export default function App() {
             title="Shortcuts: Ctrl+I"
           >
             <Package className="w-4 h-4" />
-            Inventory & CSV
+            <span>{t('navInventory', 'Inventory & CSV')}</span>
             {lowStockCount > 0 && (
               <span
                 className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-black leading-none ${
@@ -311,7 +332,7 @@ export default function App() {
             }`}
           >
             <TrendingUp className="w-4 h-4" />
-            Profit Heatmap
+            <span>{t('navAnalytics', 'Profit Heatmap')}</span>
           </button>
 
           <button
@@ -323,7 +344,7 @@ export default function App() {
             }`}
           >
             <Users className="w-4 h-4" />
-            Customer Khata
+            <span>{t('navCustomers', 'Customer Khata')}</span>
           </button>
 
           <button
@@ -335,7 +356,7 @@ export default function App() {
             }`}
           >
             <Truck className="w-4 h-4" />
-            Suppliers & Inward
+            <span>{t('navSuppliers', 'Suppliers & Inward')}</span>
           </button>
 
           <button
@@ -347,7 +368,7 @@ export default function App() {
             }`}
           >
             <RotateCcw className="w-4 h-4" />
-            Returns & Credit Notes
+            <span>{t('navReturns', 'Returns & Credit Notes')}</span>
           </button>
 
           <button
@@ -359,7 +380,7 @@ export default function App() {
             }`}
           >
             <Coins className="w-4 h-4" />
-            Expenses & Z-Closing
+            <span>{t('navExpenses', 'Expenses & Z-Closing')}</span>
           </button>
 
           <button
@@ -371,7 +392,7 @@ export default function App() {
             }`}
           >
             <Shield className="w-4 h-4" />
-            RBAC & Backups
+            <span>{t('navAudit', 'RBAC & Backups')}</span>
           </button>
 
           <button
@@ -383,81 +404,100 @@ export default function App() {
             }`}
           >
             <HelpCircle className="w-4 h-4" />
-            User Guide & .EXE
+            <span>{t('navGuide', 'User Guide & .EXE')}</span>
           </button>
         </div>
       </nav>
 
-      {/* Dynamic Main Workspace Router */}
-      <main className="flex-1 flex flex-col overflow-hidden">
-        {activeTab === 'pos' && (
-          <POSModule
-            products={products}
-            customers={customers}
-            currentUser={currentUser}
-            settings={settings}
-            onCompleteSale={handleCompleteSale}
-            onOpenCustomerModal={() => setActiveTab('customers')}
-          />
-        )}
+      {/* Dynamic Main Workspace Router with Smooth Hardware-Accelerated Transitions */}
+      <main className="flex-1 flex flex-col overflow-hidden relative">
+        <div
+          key={activeTab}
+          className="flex-1 flex flex-col overflow-hidden w-full h-full view-transition"
+        >
+          {activeTab === 'pos' && (
+            <div className="flex-1 flex flex-col overflow-y-auto">
+              <QuickStatsDashboard
+                products={products}
+                sales={sales}
+                settings={settings}
+                currentUser={currentUser}
+                onNavigateToInventoryLowStock={() => setActiveTab('inventory')}
+                onNavigateToPOS={() => setActiveTab('pos')}
+                onNavigateToClosing={() => setActiveTab('expenses')}
+                onNavigateToAnalytics={() => setActiveTab('analytics')}
+              />
+              <div className="flex-1 flex flex-col min-h-[600px]">
+                <POSModule
+                  products={products}
+                  customers={customers}
+                  currentUser={currentUser}
+                  settings={settings}
+                  onCompleteSale={handleCompleteSale}
+                  onOpenCustomerModal={() => setActiveTab('customers')}
+                />
+              </div>
+            </div>
+          )}
 
-        {activeTab === 'inventory' && (
-          <InventoryModule
-            products={products}
-            currentUser={currentUser}
-            onRefreshProducts={reloadData}
-          />
-        )}
+          {activeTab === 'inventory' && (
+            <InventoryModule
+              products={products}
+              currentUser={currentUser}
+              onRefreshProducts={reloadData}
+            />
+          )}
 
-        {activeTab === 'analytics' && (
-          <ProfitMarginHeatmapModule products={products} sales={sales} />
-        )}
+          {activeTab === 'analytics' && (
+            <ProfitMarginHeatmapModule products={products} sales={sales} />
+          )}
 
-        {activeTab === 'customers' && (
-          <CustomerKhataModule
-            customers={customers}
-            currentUser={currentUser}
-            settings={settings}
-            onRefreshCustomers={reloadData}
-          />
-        )}
+          {activeTab === 'customers' && (
+            <CustomerKhataModule
+              customers={customers}
+              currentUser={currentUser}
+              settings={settings}
+              onRefreshCustomers={reloadData}
+            />
+          )}
 
-        {activeTab === 'suppliers' && (
-          <SupplierKhataModule
-            suppliers={suppliers}
-            products={products}
-            currentUser={currentUser}
-            onRefreshData={reloadData}
-          />
-        )}
+          {activeTab === 'suppliers' && (
+            <SupplierKhataModule
+              suppliers={suppliers}
+              products={products}
+              currentUser={currentUser}
+              onRefreshData={reloadData}
+            />
+          )}
 
-        {activeTab === 'returns' && (
-          <ReturnsModule
-            sales={sales}
-            currentUser={currentUser}
-            settings={settings}
-            onRefreshSales={reloadData}
-          />
-        )}
+          {activeTab === 'returns' && (
+            <ReturnsModule
+              sales={sales}
+              currentUser={currentUser}
+              settings={settings}
+              onRefreshSales={reloadData}
+            />
+          )}
 
-        {activeTab === 'expenses' && (
-          <ExpensesClosingModule
-            currentUser={currentUser}
-            settings={settings}
-            sales={sales}
-            onRefreshData={reloadData}
-          />
-        )}
+          {activeTab === 'expenses' && (
+            <ExpensesClosingModule
+              currentUser={currentUser}
+              settings={settings}
+              sales={sales}
+              onRefreshData={reloadData}
+            />
+          )}
 
-        {activeTab === 'audit' && (
-          <SecurityAuditModule
-            currentUser={currentUser}
-            allUsers={allUsers}
-            onRefreshAll={reloadData}
-          />
-        )}
+          {activeTab === 'audit' && (
+            <SecurityAuditModule
+              currentUser={currentUser}
+              allUsers={allUsers}
+              onRefreshAll={reloadData}
+            />
+          )}
 
-        {activeTab === 'guide' && <UserGuideModule />}
+          {activeTab === 'guide' && <UserGuideModule />}
+        </div>
       </main>
 
       {/* Global Thermal & A4 Receipt Print Modal */}
@@ -466,6 +506,18 @@ export default function App() {
         onClose={() => setIsPrintModalOpen(false)}
         sale={printModalSale}
         settings={settings}
+      />
+
+      {/* Shop Settings & POS Preferences Modal */}
+      <SettingsModal
+        isOpen={isSettingsModalOpen}
+        onClose={() => setIsSettingsModalOpen(false)}
+        settings={settings}
+        onSaveSettings={(updated) => {
+          setSettings(updated);
+          reloadData();
+        }}
+        currentUser={currentUser}
       />
 
       {/* Security Terminal Authentication / Login / Lock Modal */}
@@ -479,6 +531,9 @@ export default function App() {
         currentUser={currentUser}
         onLoginSuccess={handleLoginSuccess}
       />
+
+      {/* Sync Reconciliation Failure & Conflict Resolution Modal */}
+      <SyncReconciliationFailureModal />
     </div>
   );
 }

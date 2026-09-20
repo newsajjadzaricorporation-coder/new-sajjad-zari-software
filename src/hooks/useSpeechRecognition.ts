@@ -1,12 +1,22 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 
-export function useSpeechRecognition(onResult: (transcript: string) => void) {
+export interface UseSpeechRecognitionOptions {
+  lang?: 'en-US' | 'ur-PK';
+  continuous?: boolean;
+  interimResults?: boolean;
+}
+
+export function useSpeechRecognition(
+  onResult: (transcript: string, isFinal: boolean) => void,
+  options?: UseSpeechRecognitionOptions
+) {
   const [isListening, setIsListening] = useState(false);
   const [isSupported, setIsSupported] = useState(false);
+  const [interimText, setInterimText] = useState('');
+  const [lastError, setLastError] = useState<string | null>(null);
   const onResultRef = useRef(onResult);
   const recognitionRef = useRef<any>(null);
 
-  // Keep latest onResult callback in ref without triggering effects
   useEffect(() => {
     onResultRef.current = onResult;
   }, [onResult]);
@@ -20,21 +30,52 @@ export function useSpeechRecognition(onResult: (transcript: string) => void) {
       setIsSupported(true);
       try {
         const instance = new SpeechRecognition();
-        instance.continuous = false;
-        instance.interimResults = false;
-        instance.lang = 'en-US';
+        instance.continuous = options?.continuous ?? false;
+        instance.interimResults = options?.interimResults ?? true;
+        instance.lang = options?.lang || 'en-US';
 
-        instance.onstart = () => setIsListening(true);
-        instance.onend = () => setIsListening(false);
-        instance.onerror = (e: any) => {
-          console.warn('Speech recognition error:', e);
+        instance.onstart = () => {
+          setIsListening(true);
+          setLastError(null);
+        };
+        instance.onend = () => {
           setIsListening(false);
         };
+        instance.onerror = (e: any) => {
+          console.warn('Speech recognition error event:', e?.error || e);
+          setIsListening(false);
+          if (e?.error === 'not-allowed') {
+            setLastError('Microphone permission was denied. Please allow microphone access in your browser.');
+          } else if (e?.error === 'no-speech') {
+            setLastError('No speech detected. Please speak clearly into the microphone.');
+          } else {
+            setLastError(`Voice input error: ${e?.error || 'recognition failed'}`);
+          }
+        };
         instance.onresult = (e: any) => {
-          if (e.results && e.results[0] && e.results[0][0]) {
-            const text = e.results[0][0].transcript;
+          let finalTranscript = '';
+          let interimTranscript = '';
+
+          for (let i = e.resultIndex; i < e.results.length; i++) {
+            const transcript = e.results[i][0].transcript;
+            if (e.results[i].isFinal) {
+              finalTranscript += transcript;
+            } else {
+              interimTranscript += transcript;
+            }
+          }
+
+          if (interimTranscript) {
+            setInterimText(interimTranscript);
             if (onResultRef.current) {
-              onResultRef.current(text);
+              onResultRef.current(interimTranscript, false);
+            }
+          }
+
+          if (finalTranscript) {
+            setInterimText('');
+            if (onResultRef.current) {
+              onResultRef.current(finalTranscript, true);
             }
           }
         };
@@ -54,7 +95,7 @@ export function useSpeechRecognition(onResult: (transcript: string) => void) {
         }
       }
     };
-  }, []); // Run only once on mount
+  }, [options?.lang, options?.continuous, options?.interimResults]);
 
   const toggleListening = useCallback(() => {
     if (!recognitionRef.current) return;
@@ -66,6 +107,8 @@ export function useSpeechRecognition(onResult: (transcript: string) => void) {
       }
     } else {
       try {
+        setLastError(null);
+        setInterimText('');
         recognitionRef.current.start();
       } catch (err) {
         console.warn('Speech recognition start failed:', err);
@@ -76,6 +119,9 @@ export function useSpeechRecognition(onResult: (transcript: string) => void) {
   return {
     isListening,
     isSupported,
+    interimText,
+    lastError,
     toggleListening,
   };
 }
+

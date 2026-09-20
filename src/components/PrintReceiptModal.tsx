@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Printer, X, Bluetooth, FileText, Check, Download } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import { Printer, X, Bluetooth, FileText, Check, Download, Sparkles } from 'lucide-react';
 import { SaleInvoice, ShopSettings } from '../types';
 import { generateBarcodeSvg } from '../utils/barcode';
 import { ESCPOSPrinter } from '../utils/escpos';
@@ -19,13 +20,18 @@ export const PrintReceiptModal: React.FC<PrintReceiptModalProps> = ({
 }) => {
   const [printLayout, setPrintLayout] = useState<'thermal80' | 'thermal58' | 'a4'>('thermal80');
   const [bluetoothStatus, setBluetoothStatus] = useState<string | null>(null);
+  const [isPrintingAnim, setIsPrintingAnim] = useState(false);
 
   if (!isOpen || !sale) return null;
 
   const barcodeSvg = generateBarcodeSvg(sale.invoiceNo, 40, true);
 
   const handleBrowserPrint = () => {
-    window.print();
+    setIsPrintingAnim(true);
+    setTimeout(() => {
+      window.print();
+      setIsPrintingAnim(false);
+    }, 400);
   };
 
   const handleBluetoothPrint = async () => {
@@ -41,74 +47,89 @@ export const PrintReceiptModal: React.FC<PrintReceiptModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 overflow-y-auto">
-      <div className="relative w-full max-w-2xl bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden my-6 flex flex-col max-h-[90vh]">
-        {/* Top Control Bar */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-950/70 shrink-0">
-          <div className="flex items-center gap-2">
-            <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400">
-              <Printer className="w-5 h-5" />
+    <AnimatePresence>
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 overflow-y-auto">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.94, y: 16 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          exit={{ opacity: 0, scale: 0.94, y: 16 }}
+          transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
+          className="relative w-full max-w-2xl bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden my-6 flex flex-col max-h-[90vh]"
+        >
+          {/* Top Control Bar */}
+          <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-950/70 shrink-0">
+            <div className="flex items-center gap-2">
+              <motion.div
+                animate={isPrintingAnim ? { rotate: [0, -10, 10, -10, 0] } : {}}
+                transition={{ repeat: Infinity, duration: 0.8 }}
+                className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400"
+              >
+                <Printer className="w-5 h-5" />
+              </motion.div>
+              <div>
+                <h3 className="text-base font-semibold text-white">Receipt & Invoice Print</h3>
+                <p className="text-xs text-slate-400">Invoice: #{sale.invoiceNo}</p>
+              </div>
             </div>
-            <div>
-              <h3 className="text-base font-semibold text-white">Receipt & Invoice Print</h3>
-              <p className="text-xs text-slate-400">Invoice: #{sale.invoiceNo}</p>
+
+            <div className="flex items-center gap-2">
+              {/* Format Toggle Buttons */}
+              <div className="flex bg-slate-800 p-1 rounded-lg border border-slate-700">
+                <button
+                  type="button"
+                  onClick={() => setPrintLayout('thermal80')}
+                  className={`px-2.5 py-1 text-xs font-medium rounded-md transition ${
+                    printLayout === 'thermal80' ? 'bg-amber-500 text-slate-950 font-bold shadow-sm' : 'text-slate-300 hover:text-white'
+                  }`}
+                >
+                  80mm Thermal
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPrintLayout('thermal58')}
+                  className={`px-2.5 py-1 text-xs font-medium rounded-md transition ${
+                    printLayout === 'thermal58' ? 'bg-amber-500 text-slate-950 font-bold shadow-sm' : 'text-slate-300 hover:text-white'
+                  }`}
+                >
+                  58mm Mini
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPrintLayout('a4')}
+                  className={`px-2.5 py-1 text-xs font-medium rounded-md transition ${
+                    printLayout === 'a4' ? 'bg-amber-500 text-slate-950 font-bold shadow-sm' : 'text-slate-300 hover:text-white'
+                  }`}
+                >
+                  A4 Laser
+                </button>
+              </div>
+
+              <button
+                onClick={onClose}
+                className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition ml-2"
+              >
+                <X className="w-5 h-5" />
+              </button>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            {/* Format Toggle Buttons */}
-            <div className="flex bg-slate-800 p-1 rounded-lg border border-slate-700">
-              <button
-                type="button"
-                onClick={() => setPrintLayout('thermal80')}
-                className={`px-2.5 py-1 text-xs font-medium rounded-md transition ${
-                  printLayout === 'thermal80' ? 'bg-amber-500 text-slate-950 font-bold' : 'text-slate-300 hover:text-white'
-                }`}
-              >
-                80mm Thermal
-              </button>
-              <button
-                type="button"
-                onClick={() => setPrintLayout('thermal58')}
-                className={`px-2.5 py-1 text-xs font-medium rounded-md transition ${
-                  printLayout === 'thermal58' ? 'bg-amber-500 text-slate-950 font-bold' : 'text-slate-300 hover:text-white'
-                }`}
-              >
-                58mm Mini
-              </button>
-              <button
-                type="button"
-                onClick={() => setPrintLayout('a4')}
-                className={`px-2.5 py-1 text-xs font-medium rounded-md transition ${
-                  printLayout === 'a4' ? 'bg-amber-500 text-slate-950 font-bold' : 'text-slate-300 hover:text-white'
-                }`}
-              >
-                A4 Laser
-              </button>
-            </div>
-
-            <button
-              onClick={onClose}
-              className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition ml-2"
+          {/* Scrollable Receipt Preview Area */}
+          <div className="flex-1 overflow-y-auto p-6 bg-slate-950/40 flex justify-center items-start">
+            {/* Animated Print Container with ID for CSS isolation */}
+            <motion.div
+              key={printLayout}
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.2 }}
+              id="printable-receipt"
+              className={`bg-white text-black shadow-2xl rounded-sm ${
+                printLayout === 'thermal58'
+                  ? 'w-[280px] p-3 text-xs'
+                  : printLayout === 'thermal80'
+                  ? 'w-[360px] p-5 text-sm'
+                  : 'w-full max-w-[720px] p-8 text-sm'
+              }`}
             >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
-
-        {/* Scrollable Receipt Preview Area */}
-        <div className="flex-1 overflow-y-auto p-6 bg-slate-950/40 flex justify-center items-start">
-          {/* Print Container with ID for CSS isolation */}
-          <div
-            id="printable-receipt"
-            className={`bg-white text-black transition-all shadow-xl rounded-sm ${
-              printLayout === 'thermal58'
-                ? 'w-[280px] p-3 text-xs'
-                : printLayout === 'thermal80'
-                ? 'w-[360px] p-5 text-sm'
-                : 'w-full max-w-[720px] p-8 text-sm'
-            }`}
-          >
             {printLayout === 'a4' ? (
               /* ================== A4 WHOLESALE LASER LAYOUT ================== */
               <div className="space-y-6">
@@ -199,6 +220,15 @@ export const PrintReceiptModal: React.FC<PrintReceiptModalProps> = ({
                       <div className="flex justify-between py-1 border-b border-slate-200 text-emerald-700">
                         <span>Discount ({sale.discountType === 'percentage' ? `${sale.discountValue}%` : 'Flat'}):</span>
                         <span className="font-semibold">-Rs {sale.discountAmount.toLocaleString()}</span>
+                      </div>
+                    )}
+                    {sale.serviceFee !== undefined && sale.serviceFee > 0 && (
+                      <div className="flex justify-between py-1 border-b border-slate-200 text-blue-800">
+                        <span>
+                          Service / Alteration Fee
+                          {sale.serviceFeeType === 'percentage' && sale.serviceFeeValue ? ` (${sale.serviceFeeValue}%)` : ''}:
+                        </span>
+                        <span className="font-semibold">+Rs {sale.serviceFee.toLocaleString()}</span>
                       </div>
                     )}
                     <div className="flex justify-between py-1 text-base font-bold text-slate-950 border-b-2 border-slate-900">
@@ -297,6 +327,14 @@ export const PrintReceiptModal: React.FC<PrintReceiptModalProps> = ({
                       <span>-Rs {sale.discountAmount}</span>
                     </div>
                   )}
+                  {sale.serviceFee !== undefined && sale.serviceFee > 0 && (
+                    <div className="flex justify-between text-slate-700">
+                      <span>
+                        Service Fee {sale.serviceFeeType === 'percentage' && sale.serviceFeeValue ? `(${sale.serviceFeeValue}%)` : ''}:
+                      </span>
+                      <span>+Rs {sale.serviceFee}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between text-sm font-bold pt-1 border-t border-slate-300">
                     <span>NET PAYABLE:</span>
                     <span>Rs {sale.netTotal}</span>
@@ -342,41 +380,42 @@ export const PrintReceiptModal: React.FC<PrintReceiptModalProps> = ({
                 </div>
               </div>
             )}
-          </div>
-        </div>
-
-        {/* Action Controls Bar */}
-        <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-4 border-t border-slate-800 bg-slate-950/80 shrink-0">
-          <div>
-            {bluetoothStatus && (
-              <span className="text-xs text-amber-400 font-medium animate-pulse">
-                {bluetoothStatus}
-              </span>
-            )}
+            </motion.div>
           </div>
 
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={handleBluetoothPrint}
-              className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs font-semibold text-slate-200 transition"
-              title="Print directly to paired Bluetooth 58mm/80mm Thermal Printer"
-            >
-              <Bluetooth className="w-4 h-4 text-blue-400" />
-              Bluetooth Print
-            </button>
+          {/* Action Controls Bar */}
+          <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-4 border-t border-slate-800 bg-slate-950/80 shrink-0">
+            <div>
+              {bluetoothStatus && (
+                <span className="text-xs text-amber-400 font-medium animate-pulse">
+                  {bluetoothStatus}
+                </span>
+              )}
+            </div>
 
-            <button
-              type="button"
-              onClick={handleBrowserPrint}
-              className="flex items-center gap-2 px-5 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-lg text-sm font-bold shadow-lg shadow-amber-500/20 transition"
-            >
-              <Printer className="w-4 h-4" />
-              Print Receipt (ESC/POS)
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={handleBluetoothPrint}
+                className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs font-semibold text-slate-200 transition cursor-pointer"
+                title="Print directly to paired Bluetooth 58mm/80mm Thermal Printer"
+              >
+                <Bluetooth className="w-4 h-4 text-blue-400" />
+                Bluetooth Print
+              </button>
+
+              <button
+                type="button"
+                onClick={handleBrowserPrint}
+                className="flex items-center gap-2 px-5 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-lg text-sm font-bold shadow-lg shadow-amber-500/20 transition cursor-pointer"
+              >
+                <Printer className="w-4 h-4" />
+                Print Receipt (ESC/POS)
+              </button>
+            </div>
           </div>
-        </div>
+        </motion.div>
       </div>
-    </div>
+    </AnimatePresence>
   );
 };

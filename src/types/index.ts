@@ -55,6 +55,13 @@ export interface SaleInvoice {
   discountType: 'flat' | 'percentage';
   discountValue: number;
   discountAmount: number;
+  serviceFee?: number;
+  serviceFeeType?: 'flat' | 'percentage';
+  serviceFeeValue?: number;
+  loyaltyPointsEarned?: number;
+  loyaltyPointsRedeemed?: number;
+  loyaltyDiscountAmount?: number;
+  customerTier?: LoyaltyTier;
   netTotal: number;
   paymentMethod: PaymentMethod;
   amountTendered: number;
@@ -63,6 +70,18 @@ export interface SaleInvoice {
   newBalance?: number;
   status: 'completed' | 'returned' | 'partial_return';
   notes?: string;
+}
+
+export type LoyaltyTier = 'Bronze' | 'Silver' | 'Gold' | 'Platinum';
+
+export interface LoyaltyTierConfig {
+  tier: LoyaltyTier;
+  minPoints: number;
+  discountPercent: number;
+  pointMultiplier: number;
+  badgeColor: string;
+  urduTitle: string;
+  perks: string;
 }
 
 export interface Customer {
@@ -74,6 +93,9 @@ export interface Customer {
   address?: string;
   creditLimit: number;
   currentBalance: number; // positive = customer owes shop (debt/udhaar)
+  loyaltyPoints?: number; // available redeemable points
+  lifetimePoints?: number; // total points accumulated
+  loyaltyTier?: LoyaltyTier; // Bronze, Silver, Gold, Platinum
   notes?: string;
   createdAt: string;
   updatedAt: string;
@@ -136,6 +158,7 @@ export interface PurchaseOrder {
   paymentMethod: 'cash' | 'bank' | 'credit';
   status?: 'received' | 'pending';
   notes?: string;
+  receivedBy?: string;
 }
 export type PurchaseInvoice = PurchaseOrder;
 
@@ -248,4 +271,45 @@ export interface ShopSettings {
   defaultPrinterMode: 'thermal80' | 'thermal58' | 'a4';
   currency: string;
   enableSoundEffects: boolean;
+  autoPrintReceipt?: boolean;
+  dailySalesGoal?: number;
+  defaultServiceFee?: number;
+  defaultServiceFeeType?: 'flat' | 'percentage';
+  loyaltyEnabled?: boolean;
+  pointsPerHundredRupees?: number; // e.g. 1 point for every 100 Rs spent (or 1 pt/100 Rs = 1%)
+  pointRedemptionRate?: number; // e.g. 1 point = 1 Rs
+  minPointsToRedeem?: number; // minimum points needed to redeem (e.g. 50)
+}
+
+export interface CSVValidationItem {
+  rowIndex: number;
+  isValid: boolean;
+  action: 'insert' | 'update';
+  existingProductId?: string;
+  data: {
+    sku: string;
+    barcode?: string;
+    name: string;
+    urduName?: string;
+    category: string;
+    costPrice: number;
+    sellingPrice: number;
+    stock: number;
+    unit: UnitType;
+    minStockAlert: number;
+    notes?: string;
+  };
+  errors: string[];
+  warnings: string[];
+}
+
+export interface CSVValidationSummary {
+  totalRows: number;
+  validCount: number;
+  invalidCount: number;
+  newCount: number;
+  updateCount: number;
+  warningCount: number;
+  items: CSVValidationItem[];
+  errors: string[];
 }

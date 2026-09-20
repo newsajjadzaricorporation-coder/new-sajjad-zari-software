@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Lock,
   LogIn,
@@ -149,6 +149,24 @@ export const LoginModal: React.FC<LoginModalProps> = ({
       }
     }
   };
+
+  // Keyboard navigation and instant PIN typing
+  useEffect(() => {
+    if (!isOpen || authMode !== 'pin') return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key >= '0' && e.key <= '9') {
+        handleKeypadPress(e.key);
+      } else if (e.key === 'Backspace') {
+        handleKeypadPress('BACKSPACE');
+      } else if (e.key === 'Escape') {
+        if (canDismiss && onClose) onClose();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, authMode, pin, selectedUserId, canDismiss, onClose]);
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4">
