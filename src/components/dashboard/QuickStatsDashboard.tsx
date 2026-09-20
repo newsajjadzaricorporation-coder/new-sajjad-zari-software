@@ -72,6 +72,7 @@ export const QuickStatsDashboard: React.FC<QuickStatsDashboardProps> = ({
 }) => {
   const [isExpanded, setIsExpanded] = useState<boolean>(true);
   const [showLowStockModal, setShowLowStockModal] = useState<boolean>(false);
+  const [weeklyMetricView, setWeeklyMetricView] = useState<'revenue' | 'profit'>('revenue');
 
   // Today's Date String (YYYY-MM-DD)
   const todayStr = useMemo(() => new Date().toISOString().slice(0, 10), []);
@@ -346,8 +347,11 @@ export const QuickStatsDashboard: React.FC<QuickStatsDashboardProps> = ({
     };
   }, [suppliers]);
 
-  // 7-Day Sales Volume Trend Data (Invoices/Orders count per day)
+  // 7-Day Sales & Profit Performance Data
   const last7DaysData = useMemo(() => {
+    const prodMap = new Map<string, Product>();
+    products.forEach((p) => prodMap.set(p.id, p));
+
     const result = [];
     const now = new Date();
 
@@ -360,25 +364,34 @@ export const QuickStatsDashboard: React.FC<QuickStatsDashboardProps> = ({
       const daySales = sales.filter((s) => s.date && s.date.startsWith(dateKey));
       const volume = daySales.length;
       let revenue = 0;
+      let cogs = 0;
       let units = 0;
 
       for (const s of daySales) {
         revenue += s.netTotal || 0;
         s.items?.forEach((it) => {
-          units += Number(it.quantity) || 0;
+          const qty = Number(it.quantity) || 0;
+          units += qty;
+          const liveProd = prodMap.get(it.product?.id) || it.product;
+          const unitCost = liveProd?.costPrice ?? it.product?.costPrice ?? 0;
+          cogs += qty * unitCost;
         });
       }
+
+      const profit = Math.max(0, revenue - cogs);
 
       result.push({
         dateKey,
         dayLabel: `${dayLabel} ${d.getDate()}`,
         volume,
         revenue,
+        cogs,
+        profit,
         units,
       });
     }
     return result;
-  }, [sales]);
+  }, [sales, products]);
 
   // 30-Day Total Daily Sales Performance Data
   const last30DaysData = useMemo(() => {
@@ -486,6 +499,21 @@ export const QuickStatsDashboard: React.FC<QuickStatsDashboardProps> = ({
       trendSlope: Math.round(slope),
     };
   }, [sales, dailyMetrics.netSales]);
+
+  // Supplier Pending Purchases Payment Due Alert (within 3 days or overdue)
+  const pendingDuePurchases = useMemo(() => {
+    const purchases = OfflineDB.getPurchases();
+    const nowMs = Date.now();
+    const threeDaysMs = 3 * 24 * 60 * 60 * 1000;
+
+    return purchases.filter((p) => {
+      const remainingPayable = (p.totalAmount || 0) - (p.paidAmount || 0);
+      if (remainingPayable <= 0) return false;
+      if (!p.dueDate) return false;
+      const dueMs = new Date(p.dueDate).getTime();
+      return dueMs - nowMs <= threeDaysMs;
+    });
+  }, [sales]);
 
   return (
     <div className="w-full bg-slate-950 border-b border-slate-800 shadow-md">
@@ -632,6 +660,53 @@ export const QuickStatsDashboard: React.FC<QuickStatsDashboardProps> = ({
                   </div>
                 </div>
               </div>
+
+              {/* SUPPLIER PAYMENT DUE ALERT BADGE BANNER */}
+              {pendingDuePurchases.length > 0 && (
+                <div className="mt-3 p-3.5 rounded-xl bg-red-950/40 border border-red-500/40 shadow-lg space-y-2 animate-pulse">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-2 rounded-lg bg-red-500/20 text-red-400 border border-red-500/30 shrink-0">
+                        <Clock className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold text-white uppercase tracking-wider">
+                            Payment Due Alert ({pendingDuePurchases.length} Pending Supplier Deadlines)
+                          </span>
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-500/20 text-red-300 border border-red-500/40">
+                            ACTION REQUIRED
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-red-200/80">
+                          Supplier purchases with payment due dates within 3 days or overdue:
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 pt-1">
+                    {pendingDuePurchases.map((pur) => {
+                      const diffDays = Math.ceil((new Date(pur.dueDate!).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+                      const remaining = (pur.totalAmount || 0) - (pur.paidAmount || 0);
+                      return (
+                        <div key={pur.id} className="p-2.5 bg-slate-900/90 rounded-lg border border-red-500/30 flex items-center justify-between text-xs">
+                          <div>
+                            <span className="font-bold text-amber-300 font-mono block">{pur.purchaseNo}</span>
+                            <span className="text-slate-300 text-[11px] block">{pur.supplierName}</span>
+                          </div>
+                          <div className="text-right">
+                            <span className="font-bold text-red-400 font-mono block">Rs {remaining.toLocaleString()}</span>
+                            <span className="text-[10px] font-semibold text-red-300">
+                              {diffDays < 0 ? `Overdue (${Math.abs(diffDays)}d)` : diffDays === 0 ? 'Due Today!' : `Due in ${diffDays}d`}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               <div className="pt-3 pb-1 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
                 {/* 1. DAILY TOTAL SALES CARD */}
@@ -1100,31 +1175,57 @@ export const QuickStatsDashboard: React.FC<QuickStatsDashboardProps> = ({
 
               {/* 7-DAY & 30-DAY SALES PERFORMANCE TREND CHARTS (RECHARTS) */}
               <div className="mt-3.5 grid grid-cols-1 lg:grid-cols-2 gap-3.5 pb-2">
-                {/* 1. 7-DAY SALES VOLUME MINI-LINE CHART */}
+                {/* 1. 7-DAY INTERACTIVE SALES & PROFIT LINE CHART */}
                 <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800/90 shadow-sm flex flex-col justify-between hover:border-slate-700/80 transition">
-                  <div className="flex items-center justify-between mb-2">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2">
                     <div className="flex items-center gap-2">
                       <div className="p-1.5 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20">
                         <BarChart3 className="w-3.5 h-3.5" />
                       </div>
                       <div>
                         <h5 className="text-xs font-bold text-white flex items-center gap-1.5">
-                          <span>7-Day Daily Sales Volume Trend</span>
-                          <span className="text-[10px] text-amber-400 font-normal font-urdu">(گزشتہ 7 دن کی سیلز)</span>
+                          <span>7-Day {weeklyMetricView === 'revenue' ? 'Sales Revenue' : 'Net Profit'} Trend</span>
+                          <span className="text-[10px] text-amber-400 font-normal font-urdu">
+                            {weeklyMetricView === 'revenue' ? '(گزشتہ 7 دن کی سیلز)' : '(گزشتہ 7 دن کا منافع)'}
+                          </span>
                         </h5>
                         <p className="text-[10px] text-slate-400">
-                          Checkout frequency and customer invoice volume over the last 7 days
+                          {weeklyMetricView === 'revenue'
+                            ? 'Daily sales revenue in Rupees over the last 7 days'
+                            : 'Daily net margin (Revenue minus Cost of Goods Sold) over the last 7 days'}
                         </p>
                       </div>
                     </div>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-800 text-amber-400 border border-slate-700 shrink-0">
-                      {last7DaysData.reduce((acc, curr) => acc + curr.volume, 0)} Total Invoices
-                    </span>
+
+                    <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-lg border border-slate-800 self-start sm:self-auto">
+                      <button
+                        type="button"
+                        onClick={() => setWeeklyMetricView('revenue')}
+                        className={`px-2.5 py-1 rounded text-[11px] font-bold transition cursor-pointer ${
+                          weeklyMetricView === 'revenue'
+                            ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        Revenue View
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setWeeklyMetricView('profit')}
+                        className={`px-2.5 py-1 rounded text-[11px] font-bold transition cursor-pointer ${
+                          weeklyMetricView === 'profit'
+                            ? 'bg-cyan-500 text-slate-950 shadow-sm'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        Profit View
+                      </button>
+                    </div>
                   </div>
 
                   <div className="h-44 w-full pt-2">
                     <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={last7DaysData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                      <LineChart data={last7DaysData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
                         <XAxis
                           dataKey="dayLabel"
@@ -1138,29 +1239,31 @@ export const QuickStatsDashboard: React.FC<QuickStatsDashboardProps> = ({
                           fontSize={10}
                           tickLine={false}
                           axisLine={false}
-                          allowDecimals={false}
+                          tickFormatter={(val) => (val >= 1000 ? `${Math.round(val / 1000)}k` : `${val}`)}
                         />
                         <Tooltip
                           content={({ active, payload }) => {
                             if (active && payload && payload.length) {
                               const item = payload[0].payload;
                               return (
-                                <div className="bg-slate-950 border border-slate-700 p-2.5 rounded-xl text-xs shadow-2xl space-y-1 z-50">
+                                <div className="bg-slate-950 border border-slate-700 p-2.5 rounded-xl text-xs shadow-2xl space-y-1.5 z-50">
                                   <p className="font-bold text-white border-b border-slate-800 pb-1">
                                     {item.dayLabel} • {item.dateKey}
                                   </p>
-                                  <p className="text-amber-400 font-bold flex items-center justify-between gap-3">
-                                    <span>Sales Volume:</span>
-                                    <span>{item.volume} {item.volume === 1 ? 'bill' : 'bills'}</span>
-                                  </p>
-                                  <p className="text-slate-300 flex items-center justify-between gap-3">
-                                    <span>Items Dispatched:</span>
-                                    <span>{item.units} units</span>
-                                  </p>
-                                  <p className="text-emerald-400 font-semibold flex items-center justify-between gap-3 pt-0.5 border-t border-slate-800">
-                                    <span>Total Value:</span>
-                                    <span>Rs {item.revenue.toLocaleString()}</span>
-                                  </p>
+                                  <div className="space-y-1 text-[11px]">
+                                    <div className="flex justify-between gap-4 text-emerald-400 font-bold">
+                                      <span>Daily Revenue:</span>
+                                      <span>Rs {item.revenue.toLocaleString()}</span>
+                                    </div>
+                                    <div className="flex justify-between gap-4 text-slate-400">
+                                      <span>Cost of Goods Sold:</span>
+                                      <span>Rs {item.cogs.toLocaleString()}</span>
+                                    </div>
+                                    <div className="flex justify-between gap-4 text-cyan-400 font-bold pt-1 border-t border-slate-800">
+                                      <span>Net Profit Margin:</span>
+                                      <span>Rs {item.profit.toLocaleString()}</span>
+                                    </div>
+                                  </div>
                                 </div>
                               );
                             }
@@ -1169,11 +1272,21 @@ export const QuickStatsDashboard: React.FC<QuickStatsDashboardProps> = ({
                         />
                         <Line
                           type="monotone"
-                          dataKey="volume"
-                          stroke="#f59e0b"
+                          dataKey={weeklyMetricView}
+                          stroke={weeklyMetricView === 'revenue' ? '#10b981' : '#06b6d4'}
                           strokeWidth={2.5}
-                          dot={{ r: 3.5, fill: '#f59e0b', strokeWidth: 1.5, stroke: '#0f172a' }}
-                          activeDot={{ r: 5, fill: '#fbbf24', stroke: '#fff', strokeWidth: 2 }}
+                          dot={{
+                            r: 3.5,
+                            fill: weeklyMetricView === 'revenue' ? '#10b981' : '#06b6d4',
+                            strokeWidth: 1.5,
+                            stroke: '#0f172a',
+                          }}
+                          activeDot={{
+                            r: 5,
+                            fill: weeklyMetricView === 'revenue' ? '#34d399' : '#38bdf8',
+                            stroke: '#fff',
+                            strokeWidth: 2,
+                          }}
                         />
                       </LineChart>
                     </ResponsiveContainer>

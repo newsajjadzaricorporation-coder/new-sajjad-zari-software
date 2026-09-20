@@ -430,7 +430,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  Thermal Receipt Footer Notice (Urdu / English Return Policy)
+                  Thermal Receipt Footer Notice (Urdu Return Policy)
                 </label>
                 <input
                   type="text"
@@ -440,6 +440,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   placeholder="مال کی واپسی یا تبدیلی 7 دن کے اندر بل کے ساتھ ممکن ہے"
                   className="w-full px-3.5 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-sm text-amber-300 font-urdu focus:border-amber-400 focus:outline-none text-right"
                 />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  Custom Receipt Footer Text (Store Hours, Policy, Social Links)
+                </label>
+                <input
+                  type="text"
+                  value={formData.customReceiptFooter || ''}
+                  onChange={(e) => setFormData({ ...formData, customReceiptFooter: e.target.value })}
+                  placeholder="e.g. Store Hours: 10 AM - 10 PM • Follow us @sajjadzariofficial"
+                  className="w-full px-3.5 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-sm text-white focus:border-amber-400 focus:outline-none"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Appears at the bottom of all printed Thermal and A4 receipts
+                </p>
               </div>
 
               <div className="p-3 bg-slate-800/60 rounded-xl border border-slate-700/60 flex items-center justify-between">

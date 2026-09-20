@@ -8,6 +8,7 @@ export const DEFAULT_SETTINGS: ShopSettings = {
   address: 'Shop # 14-16, Madina Zari Market, Shah Alam, Lahore, Pakistan',
   thermalHeaderNote: 'NTN: 4129845-2 | Retail & Wholesale Zari Specialists',
   thermalFooterUrdu: 'مال کی واپسی یا تبدیلی 7 دن کے اندر بل کے ساتھ ممکن ہے',
+  customReceiptFooter: 'Store Hours: 10:00 AM - 10:00 PM • Exchange within 7 days with original receipt',
   defaultPrinterMode: 'thermal80',
   currency: 'Rs',
   enableSoundEffects: true,

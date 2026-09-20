@@ -238,6 +238,86 @@ Return a JSON array where each element contains:
   }
 });
 
+// Smart Stock Verification Endpoint with AI & Heuristic Fallback
+app.post('/api/ai/smart-stock-verify', async (req, res) => {
+  try {
+    const { products } = req.body;
+    if (!Array.isArray(products)) {
+      return res.status(400).json({ error: 'Products array is required' });
+    }
+
+    const ai = getGemini();
+    if (!ai) {
+      const anomalies = products.filter((p: any) => p.stock < 0 || p.stock <= (p.minStockAlert ?? 5));
+      return res.json({
+        source: 'heuristic_fallback',
+        anomalies: anomalies.map((p: any) => ({
+          productId: p.id,
+          productName: p.name,
+          issueType: p.stock < 0 ? 'NEGATIVE_STOCK' : 'LOW_STOCK_RISK',
+          severity: p.stock < 0 ? 'HIGH' : 'MEDIUM',
+          recommendation: p.stock < 0 ? 'Immediate physical audit required to correct negative stock entry.' : 'Reorder stock soon to prevent stockout.',
+        })),
+      });
+    }
+
+    const prompt = `You are an expert inventory auditor for "New Sajjad Zari Corporation". Analyze the following inventory stock data and detect potential anomalies, shrinkage, counting errors, or stockout risks.
+Products Data:
+${JSON.stringify(products.slice(0, 60).map((p: any) => ({ id: p.id, name: p.name, sku: p.sku, stock: p.stock, minStockAlert: p.minStockAlert, costPrice: p.costPrice, sellingPrice: p.sellingPrice })), null, 2)}
+
+Return a JSON array of anomalies detected (items with negative stock, suspicious zero counts, or high risk of inventory discrepancy). Each element must contain:
+- productId (string)
+- productName (string)
+- issueType (string e.g. "NEGATIVE_STOCK", "POSSIBLE_SHRINKAGE", "LOW_STOCK_WARNING")
+- severity (string enum: "HIGH", "MEDIUM", "LOW")
+- recommendation (string: actionable advice)`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.8-flash',
+      contents: prompt,
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              productId: { type: Type.STRING },
+              productName: { type: Type.STRING },
+              issueType: { type: Type.STRING },
+              severity: { type: Type.STRING, enum: ['HIGH', 'MEDIUM', 'LOW'] },
+              recommendation: { type: Type.STRING },
+            },
+            required: ['productId', 'productName', 'issueType', 'severity', 'recommendation'],
+          },
+        },
+      },
+    });
+
+    const parsed = JSON.parse(response.text || '[]');
+    return res.json({
+      source: 'gemini_ai',
+      anomalies: parsed,
+    });
+  } catch (err: any) {
+    console.error('Smart stock verification error:', err);
+    const products = Array.isArray(req.body.products) ? req.body.products : [];
+    const anomalies = products
+      .filter((p: any) => p.stock < 0 || p.stock <= (p.minStockAlert ?? 5))
+      .map((p: any) => ({
+        productId: p.id,
+        productName: p.name,
+        issueType: p.stock < 0 ? 'NEGATIVE_STOCK' : 'LOW_STOCK_RISK',
+        severity: p.stock < 0 ? 'HIGH' : 'MEDIUM',
+        recommendation: p.stock < 0 ? 'Immediate physical audit required to correct negative stock entry.' : 'Reorder stock soon to prevent stockout.',
+      }));
+    return res.json({
+      source: 'heuristic_fallback_error_recovery',
+      anomalies,
+    });
+  }
+});
+
 // Start Server with Vite Middleware in Development and Static Serving in Production
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {

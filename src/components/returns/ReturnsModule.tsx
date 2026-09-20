@@ -86,24 +86,33 @@ const ReturnsModuleComponent: React.FC<ReturnsModuleProps> = ({
     const itemsToReturn = matchedSale.items
       .filter((item) => (returnQtys[item.product.id] || 0) > 0)
       .map((item) => ({
+        productId: item.product.id,
+        productName: item.product.name,
         product: item.product,
+        returnedQty: returnQtys[item.product.id],
         returnedQuantity: returnQtys[item.product.id],
+        unitPrice: item.unitPrice,
         unitRefundPrice: item.unitPrice,
         subtotal: returnQtys[item.product.id] * item.unitPrice,
+        restockOption: (restockDisposition === 'restock' ? 'return_to_stock' : 'damaged_waste') as any,
       }));
 
     const returnRecord: ReturnRecord = {
       id: `ret-${Date.now()}`,
+      returnNo: `RET-${Date.now().toString().slice(-6)}`,
       invoiceNo: `RET-${Date.now().toString().slice(-6)}`,
       originalInvoiceNo: matchedSale.invoiceNo,
+      originalInvoiceId: matchedSale.id,
       date: new Date().toLocaleDateString(),
       timestamp: Date.now(),
       customerId: matchedSale.customerId,
       customerName: matchedSale.customerName,
       items: itemsToReturn,
+      totalRefundAmount: calculatedRefundTotal,
       refundAmount: calculatedRefundTotal,
-      restockedToInventory: restockDisposition === 'restock',
+      refundSettlement: refundMethod === 'khata_credit' ? 'credit_khata' : 'cash',
       refundMethod,
+      restockedToInventory: restockDisposition === 'restock',
       reason: returnReason,
       cashierEmail: currentUser.email,
     };

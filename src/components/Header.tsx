@@ -118,65 +118,60 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Quick Action Badges & RBAC Switcher */}
           <div className="flex items-center gap-2 sm:gap-3">
-            {/* Interactive Connection & Firestore Sync Indicator (Online / Offline / Syncing) */}
-            <button
+            {/* Floating Offline-First Sync Status Badge Indicator */}
+            <motion.button
               type="button"
+              whileHover={{ scale: 1.04 }}
+              whileTap={{ scale: 0.96 }}
               onClick={() => setShowDiagnostics(!showDiagnostics)}
-              className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border transition cursor-pointer hover:opacity-90 ${
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold border backdrop-blur-md shadow-lg transition-all cursor-pointer ${
                 isSyncInProgress
-                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 shadow-sm shadow-amber-500/20 ring-1 ring-amber-400/40'
+                  ? 'bg-amber-950/80 text-amber-300 border-amber-500/60 shadow-amber-500/20 ring-1 ring-amber-400/30'
                   : !isOnline
-                  ? 'bg-rose-500/20 text-rose-300 border-rose-500/40 shadow-sm shadow-rose-500/15'
-                  : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30 hover:border-emerald-500/50 shadow-sm shadow-emerald-500/10'
+                  ? 'bg-rose-950/80 text-rose-300 border-rose-500/60 shadow-rose-500/20 ring-1 ring-rose-400/30'
+                  : 'bg-emerald-950/80 text-emerald-300 border-emerald-500/60 shadow-emerald-500/20 ring-1 ring-emerald-400/30'
               }`}
               title={
                 isSyncInProgress
-                  ? 'Syncing in progress... (Reconciling local OfflineDB with Cloud Firestore in real-time) • Click for Diagnostics'
+                  ? `Syncing... Reconciling local changes with Cloud Firestore • Click for Diagnostics`
                   : !isOnline
-                  ? `Offline: Operating safely on local persistent cache. ${pendingRecordsCount} record(s) queued for sync. Click for Diagnostics`
-                  : `Online & Synced • Last Synced: ${
-                      formattedSyncTime || 'Active'
-                    } • Click for Diagnostics`
+                  ? `Offline • Operating safely on local persistent storage. ${pendingRecordsCount} record(s) queued for sync. Click for Diagnostics`
+                  : `Synced • All sales & inventory backed up locally & online (${formattedSyncTime || 'Active'}). Click for Diagnostics`
               }
             >
               {isSyncInProgress ? (
                 <>
-                  <span className="relative flex h-2 w-2">
+                  <span className="relative flex h-2.5 w-2.5 shrink-0">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span>
                   </span>
                   <RefreshCw className="w-3.5 h-3.5 text-amber-400 animate-spin" />
-                  <span className="font-bold text-amber-300">Syncing...</span>
+                  <span className="tracking-wide">Syncing...</span>
                 </>
               ) : !isOnline ? (
                 <>
-                  <span className="relative flex h-2 w-2">
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-rose-500"></span>
+                  <span className="relative flex h-2.5 w-2.5 shrink-0">
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500"></span>
                   </span>
                   <WifiOff className="w-3.5 h-3.5 text-rose-400" />
-                  <span className="hidden sm:inline font-medium text-rose-300">
-                    Offline ({pendingRecordsCount} pending)
-                  </span>
-                  <span className="sm:hidden font-medium text-rose-300">
-                    Offline
-                  </span>
+                  <span className="tracking-wide">Offline</span>
+                  {pendingRecordsCount > 0 && (
+                    <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-rose-500/30 text-rose-200 border border-rose-400/40 font-mono">
+                      {pendingRecordsCount}
+                    </span>
+                  )}
                 </>
               ) : (
                 <>
-                  <span className="relative flex h-2 w-2">
+                  <span className="relative flex h-2.5 w-2.5 shrink-0">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-40"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400 shadow-sm shadow-emerald-400/50"></span>
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-400 shadow-sm shadow-emerald-400/50"></span>
                   </span>
-                  <Wifi className="w-3.5 h-3.5 text-emerald-400" />
-                  <span className="hidden sm:inline font-medium text-emerald-300">
-                    Online {formattedSyncTime ? `• ${formattedSyncTime}` : '• Synced'}
-                  </span>
-                  <span className="sm:hidden font-medium text-emerald-300">
-                    Online
-                  </span>
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="tracking-wide">Synced</span>
                 </>
               )}
-            </button>
+            </motion.button>
 
             {/* Language Switcher Button (English / Urdu) */}
             <button

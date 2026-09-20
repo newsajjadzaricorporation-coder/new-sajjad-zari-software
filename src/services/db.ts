@@ -999,34 +999,50 @@ export class OfflineDB {
     returns.unshift(returnData);
     setLocalItem(DB_KEYS.RETURNS, returns);
 
-    // Restock items if selected
+    // Restock items to inventory if selected
     const products = this.getProducts();
-    for (const item of returnData.items) {
-      if (item.restockOption === 'return_to_stock') {
-        const prod = products.find((p) => p.id === item.productId);
+    let stockUpdatedCount = 0;
+
+    for (const item of returnData.items || []) {
+      const pId = item.productId || item.product?.id || (item as any).id;
+      const qty = Number(item.returnedQty ?? item.returnedQuantity ?? item.quantity ?? 0);
+      const isRestockOption =
+        item.restockOption === 'return_to_stock' ||
+        item.restockOption === 'restock' ||
+        returnData.restockedToInventory === true;
+
+      if (pId && qty > 0 && isRestockOption) {
+        const prod = products.find((p) => p.id === pId);
         if (prod) {
-          prod.stock += item.returnedQty;
+          prod.stock = Number(prod.stock || 0) + qty;
           prod.updatedAt = new Date().toISOString();
+          stockUpdatedCount++;
         }
       }
     }
-    setLocalItem(DB_KEYS.PRODUCTS, products);
+
+    if (stockUpdatedCount > 0) {
+      setLocalItem(DB_KEYS.PRODUCTS, products);
+      rebuildProductIndices(products);
+    }
 
     // If refund settled to Credit Khata, credit customer's ledger
-    if (returnData.refundSettlement === 'credit_khata' && returnData.customerId) {
+    const totalRefund = returnData.totalRefundAmount || returnData.refundAmount || 0;
+    const settlementMethod = returnData.refundSettlement || returnData.refundMethod;
+    if ((settlementMethod === 'credit_khata' || settlementMethod === 'khata_credit') && returnData.customerId) {
       this.addCustomerTransaction({
         customerId: returnData.customerId,
         type: 'return_credit',
-        referenceId: returnData.returnNo,
-        amount: returnData.totalRefundAmount,
-        notes: `Refund credit note for Return #${returnData.returnNo} (Invoice #${returnData.originalInvoiceNo})`,
+        referenceId: returnData.returnNo || returnData.invoiceNo,
+        amount: totalRefund,
+        notes: `Refund credit note for Return #${returnData.returnNo || returnData.invoiceNo} (Invoice #${returnData.originalInvoiceNo})`,
         recordedBy: userEmail,
       });
     }
 
     // Update original invoice status
     const sales = this.getSales();
-    const inv = sales.find((s) => s.invoiceNo === returnData.originalInvoiceNo);
+    const inv = sales.find((s) => s.invoiceNo === returnData.originalInvoiceNo || s.id === returnData.originalInvoiceId);
     if (inv) {
       inv.status = 'returned';
       setLocalItem(DB_KEYS.SALES, sales);
@@ -1035,8 +1051,8 @@ export class OfflineDB {
     this.addAuditLog({
       userEmail,
       actionType: 'RETURN_PROCESSED',
-      entityId: returnData.returnNo,
-      details: `Return processed: #${returnData.returnNo} for Invoice #${returnData.originalInvoiceNo}. Refund Rs ${returnData.totalRefundAmount} (${returnData.refundSettlement})`,
+      entityId: returnData.returnNo || returnData.invoiceNo,
+      details: `Return processed: #${returnData.returnNo || returnData.invoiceNo} for Invoice #${returnData.originalInvoiceNo}. Restocked ${stockUpdatedCount} product line(s). Refund Rs ${totalRefund}`,
     });
 
     broadcastUpdate('RETURNS_UPDATED', returns);
@@ -1401,15 +1417,20 @@ export class OfflineDB {
         },
       };
 
-      // Store in rolling snapshots (keep up to 14 days of automatic daily snapshots)
+      // Store in rolling snapshots
+      const settings = this.getSettings();
+      const retentionDays = settings.backupRetentionDays || 30;
       const existingSnapshots = getLocalItem<any[]>(DB_KEYS.DAILY_BACKUPS, []);
       const updatedSnapshots = [
         backupData,
         ...existingSnapshots.filter((s) => s.date !== today),
-      ].slice(0, 14);
+      ];
 
       setLocalItem(DB_KEYS.DAILY_BACKUPS, updatedSnapshots);
       setLocalItem(DB_KEYS.LAST_BACKUP_DATE, today);
+
+      // Automatically purge backups older than retention period (e.g. 30 or 60 days)
+      this.purgeOldBackupSnapshots(retentionDays);
 
       this.addAuditLog({
         userEmail: 'system-scheduler@sajjadzari.com',
@@ -1423,6 +1444,33 @@ export class OfflineDB {
       console.warn('Automated daily backup encountered a non-fatal error:', err);
       return { triggered: false, backupDate: new Date().toISOString().slice(0, 10), totalRecords: 0 };
     }
+  }
+
+  static purgeOldBackupSnapshots(retentionDays?: number): number {
+    const settings = this.getSettings();
+    const daysToKeep = retentionDays || settings.backupRetentionDays || 30;
+    const nowMs = Date.now();
+    const cutoffMs = nowMs - daysToKeep * 24 * 60 * 60 * 1000;
+
+    const snapshots = getLocalItem<any[]>(DB_KEYS.DAILY_BACKUPS, []);
+    const initialCount = snapshots.length;
+
+    const filtered = snapshots.filter((s) => {
+      const snapMs = s.timestamp || (s.date ? new Date(s.date).getTime() : 0);
+      return snapMs >= cutoffMs;
+    });
+
+    const deletedCount = initialCount - filtered.length;
+    if (deletedCount > 0) {
+      setLocalItem(DB_KEYS.DAILY_BACKUPS, filtered);
+      this.addAuditLog({
+        userEmail: 'system-scheduler@sajjadzari.com',
+        actionType: 'DATABASE_BACKUP' as any,
+        entityId: 'PURGE-BACKUPS',
+        details: `Purged ${deletedCount} backup snapshot(s) older than ${daysToKeep} days.`,
+      });
+    }
+    return deletedCount;
   }
 
   static getDailyBackupSnapshots(): Array<{

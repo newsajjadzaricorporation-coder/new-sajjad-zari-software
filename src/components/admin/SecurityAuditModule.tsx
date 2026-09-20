@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import {
   Shield,
   History,
@@ -15,7 +15,27 @@ import {
   Target,
   Percent,
   MapPin,
+  Trash2,
+  Users,
+  BarChart3,
+  TrendingUp,
+  ShoppingBag,
+  LogIn,
+  Award,
+  DollarSign,
+  Calendar,
+  Sparkles,
 } from 'lucide-react';
+import {
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  CartesianGrid,
+  Cell,
+} from 'recharts';
 import { UserProfile, AuditLogEntry, ShopSettings } from '../../types';
 import { OfflineDB } from '../../services/db';
 
@@ -31,10 +51,122 @@ export const SecurityAuditModule: React.FC<SecurityAuditModuleProps> = ({
   onRefreshAll,
 }) => {
   const isAdmin = currentUser.role === 'admin';
+  const [activeTab, setActiveTab] = useState<'analytics' | 'security'>('analytics');
   const [logs, setLogs] = useState<AuditLogEntry[]>(OfflineDB.getAuditLogs());
+  const [logFilter, setLogFilter] = useState<'all' | 'critical'>('all');
   const [settings, setSettings] = useState<ShopSettings>(OfflineDB.getSettings());
   const [isSaved, setIsSaved] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const sales = useMemo(() => OfflineDB.getSales(), []);
+
+  // Compute Staff Performance, Average Transaction Size, and Login Activity
+  const staffAnalytics = useMemo(() => {
+    const staffMap = new Map<string, {
+      id: string;
+      name: string;
+      email: string;
+      role: string;
+      totalRevenue: number;
+      totalInvoices: number;
+      totalItemsSold: number;
+      loginCount: number;
+      lastLogin: string | null;
+    }>();
+
+    // 1. Initialize from all registered users
+    allUsers.forEach((u) => {
+      const displayName = u.displayName || u.email || 'User';
+      const key = (u.email || displayName).toLowerCase();
+      staffMap.set(key, {
+        id: u.uid,
+        name: displayName,
+        email: u.email,
+        role: u.role,
+        totalRevenue: 0,
+        totalInvoices: 0,
+        totalItemsSold: 0,
+        loginCount: 0,
+        lastLogin: u.lastLogin || null,
+      });
+    });
+
+    // 2. Aggregate sales metrics per staff member
+    sales.forEach((sale) => {
+      const cashierName = sale.cashierName || 'Store Cashier';
+      let key = cashierName.toLowerCase();
+
+      let staffEntry = staffMap.get(key);
+      if (!staffEntry) {
+        // Search by partial name match
+        for (const [mapKey, entry] of staffMap.entries()) {
+          if (mapKey.includes(key) || key.includes(mapKey)) {
+            staffEntry = entry;
+            break;
+          }
+        }
+      }
+
+      if (!staffEntry) {
+        staffEntry = {
+          id: sale.cashierId || `staff-${key}`,
+          name: cashierName,
+          email: `${cashierName.replace(/\s+/g, '.').toLowerCase()}@sajjadzari.com`,
+          role: 'cashier',
+          totalRevenue: 0,
+          totalInvoices: 0,
+          totalItemsSold: 0,
+          loginCount: 0,
+          lastLogin: null,
+        };
+        staffMap.set(key, staffEntry);
+      }
+
+      staffEntry.totalRevenue += Number(sale.netTotal) || 0;
+      staffEntry.totalInvoices += 1;
+      sale.items?.forEach((it) => {
+        staffEntry!.totalItemsSold += Number(it.quantity) || 0;
+      });
+    });
+
+    // 3. Process audit logs for login count & activity
+    logs.forEach((log) => {
+      const detailStr = (log.details || '').toLowerCase();
+      const actionStr = (log.action || '').toLowerCase();
+      const userStr = (log.userEmail || '').toLowerCase();
+
+      const isLogin = actionStr.includes('login') || detailStr.includes('login') || detailStr.includes('logged in') || actionStr.includes('user_login');
+
+      if (isLogin) {
+        staffMap.forEach((entry) => {
+          if (
+            (entry.email && userStr.includes(entry.email.toLowerCase())) ||
+            (entry.name && userStr.includes(entry.name.toLowerCase())) ||
+            (entry.name && detailStr.includes(entry.name.toLowerCase()))
+          ) {
+            entry.loginCount += 1;
+            if (!entry.lastLogin || new Date(log.timestamp) > new Date(entry.lastLogin)) {
+              entry.lastLogin = log.timestamp;
+            }
+          }
+        });
+      }
+    });
+
+    return Array.from(staffMap.values())
+      .map((s) => ({
+        ...s,
+        avgTransactionSize: s.totalInvoices > 0 ? Math.round(s.totalRevenue / s.totalInvoices) : 0,
+      }))
+      .sort((a, b) => b.totalRevenue - a.totalRevenue);
+  }, [allUsers, sales, logs]);
+
+  const filteredLogs = useMemo(() => {
+    if (logFilter === 'critical') {
+      return logs.filter((l) => /delete|override|stock|pin|reset|admin|price|invoice/i.test(l.action + l.details));
+    }
+    return logs;
+  }, [logs, logFilter]);
 
   const handleSaveSettings = (e: React.FormEvent) => {
     e.preventDefault();
@@ -140,14 +272,277 @@ export const SecurityAuditModule: React.FC<SecurityAuditModuleProps> = ({
     }
   };
 
+  // Purge expired backup files
+  const handlePurgeExpiredBackups = () => {
+    const deletedCount = OfflineDB.purgeOldBackupSnapshots(settings.backupRetentionDays || 30);
+    alert(
+      deletedCount > 0
+        ? `Cleaned up local storage! Successfully auto-deleted ${deletedCount} backup snapshot(s) older than ${settings.backupRetentionDays || 30} days.`
+        : `No expired backup files found older than ${settings.backupRetentionDays || 30} days. Local storage is already clean!`
+    );
+    onRefreshAll();
+  };
+
   const dailySnapshots = OfflineDB.getDailyBackupSnapshots();
 
   return (
     <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 space-y-6 bg-slate-900">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight flex items-center gap-2">
+      {/* Navigation Tab Selector */}
+      <div className="flex items-center gap-2 border-b border-slate-800 pb-3">
+        <button
+          type="button"
+          onClick={() => setActiveTab('analytics')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition cursor-pointer ${
+            activeTab === 'analytics'
+              ? 'bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/20'
+              : 'bg-slate-800/80 text-slate-300 hover:bg-slate-800 hover:text-white border border-slate-700/60'
+          }`}
+        >
+          <BarChart3 className="w-4 h-4" />
+          <span>Staff Performance & Analytics</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('security')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition cursor-pointer ${
+            activeTab === 'security'
+              ? 'bg-amber-500 text-slate-950 shadow-lg shadow-amber-500/20'
+              : 'bg-slate-800/80 text-slate-300 hover:bg-slate-800 hover:text-white border border-slate-700/60'
+          }`}
+        >
+          <Shield className="w-4 h-4" />
+          <span>Security, Backups & Audit Logs</span>
+        </button>
+      </div>
+
+      {activeTab === 'analytics' ? (
+        /* ================== STAFF PERFORMANCE ANALYTICS VIEW ================== */
+        <div className="space-y-6">
+          {/* Top Overview Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-1">
+              <span className="text-xs font-medium text-slate-400">Total Registered Staff</span>
+              <div className="text-2xl font-black text-white flex items-center gap-2">
+                <Users className="w-5 h-5 text-amber-400" />
+                {staffAnalytics.length} Members
+              </div>
+              <div className="text-[11px] text-slate-400">Cashiers, Managers & Admins</div>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-1">
+              <span className="text-xs font-medium text-slate-400">Top Revenue Contributor</span>
+              <div className="text-2xl font-black text-emerald-400 flex items-center gap-2 truncate">
+                <Award className="w-5 h-5 text-emerald-400 shrink-0" />
+                <span className="truncate">{staffAnalytics[0]?.name || 'N/A'}</span>
+              </div>
+              <div className="text-[11px] text-slate-400">
+                Rs {(staffAnalytics[0]?.totalRevenue || 0).toLocaleString()} generated
+              </div>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-1">
+              <span className="text-xs font-medium text-slate-400">Avg System Transaction</span>
+              <div className="text-2xl font-black text-cyan-400 flex items-center gap-2">
+                <TrendingUp className="w-5 h-5 text-cyan-400" />
+                Rs {Math.round(
+                  staffAnalytics.reduce((acc, curr) => acc + curr.totalRevenue, 0) /
+                    Math.max(1, staffAnalytics.reduce((acc, curr) => acc + curr.totalInvoices, 0))
+                ).toLocaleString()}
+              </div>
+              <div className="text-[11px] text-slate-400">Average sales value per receipt</div>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-1">
+              <span className="text-xs font-medium text-slate-400">Total Login Sessions</span>
+              <div className="text-2xl font-black text-purple-400 flex items-center gap-2">
+                <LogIn className="w-5 h-5 text-purple-400" />
+                {staffAnalytics.reduce((acc, curr) => acc + curr.loginCount, 0)} Logins
+              </div>
+              <div className="text-[11px] text-slate-400">Audit logged staff access events</div>
+            </div>
+          </div>
+
+          {/* Staff Performance Bar Chart (Recharts) */}
+          <div className="p-5 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <BarChart3 className="w-4 h-4 text-amber-400" />
+                  <span>Sales Revenue Comparison by Staff Member</span>
+                  <span className="text-xs text-amber-400 font-urdu font-normal">(اسٹاف کی سیلز کی کارکردگی)</span>
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Visual breakdown of total net revenue generated across active cashiers and admins
+                </p>
+              </div>
+            </div>
+
+            <div className="h-60 w-full pt-2">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={staffAnalytics} margin={{ top: 10, right: 10, left: -10, bottom: 20 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                  <XAxis
+                    dataKey="name"
+                    stroke="#64748b"
+                    fontSize={11}
+                    tickLine={false}
+                    axisLine={{ stroke: '#334155' }}
+                  />
+                  <YAxis
+                    stroke="#64748b"
+                    fontSize={10}
+                    tickLine={false}
+                    axisLine={false}
+                    tickFormatter={(val) => (val >= 1000 ? `${Math.round(val / 1000)}k` : `${val}`)}
+                  />
+                  <Tooltip
+                    content={({ active, payload }) => {
+                      if (active && payload && payload.length) {
+                        const item = payload[0].payload;
+                        return (
+                          <div className="bg-slate-950 border border-slate-700 p-3 rounded-xl text-xs shadow-2xl space-y-1.5 z-50">
+                            <div className="font-bold text-white border-b border-slate-800 pb-1 flex justify-between gap-4">
+                              <span>{item.name}</span>
+                              <span className="uppercase text-[10px] text-amber-400 font-mono">{item.role}</span>
+                            </div>
+                            <div className="space-y-1 text-slate-300">
+                              <div className="flex justify-between gap-6 text-emerald-400 font-bold">
+                                <span>Total Sales Revenue:</span>
+                                <span>Rs {item.totalRevenue.toLocaleString()}</span>
+                              </div>
+                              <div className="flex justify-between gap-6">
+                                <span>Invoices Issued:</span>
+                                <span>{item.totalInvoices} receipts</span>
+                              </div>
+                              <div className="flex justify-between gap-6 text-cyan-400 font-semibold">
+                                <span>Avg Transaction Size:</span>
+                                <span>Rs {item.avgTransactionSize.toLocaleString()}</span>
+                              </div>
+                              <div className="flex justify-between gap-6 text-purple-300">
+                                <span>Login Count:</span>
+                                <span>{item.loginCount} sessions</span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      }
+                      return null;
+                    }}
+                  />
+                  <Bar dataKey="totalRevenue" radius={[6, 6, 0, 0]}>
+                    {staffAnalytics.map((_, index) => {
+                      const colors = ['#10b981', '#f59e0b', '#06b6d4', '#6366f1', '#a855f7'];
+                      return <Cell key={`cell-${index}`} fill={colors[index % colors.length]} />;
+                    })}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Detailed Staff Performance Table */}
+          <div className="p-5 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div>
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Users className="w-4 h-4 text-amber-400" />
+                  <span>Staff Member Performance Breakdown</span>
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Detailed analytics covering sales volume, average ticket size, items sold, and authentication frequency
+                </p>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="bg-slate-950 text-slate-400 border-b border-slate-800">
+                    <th className="py-3 px-4 font-semibold">Staff Member</th>
+                    <th className="py-3 px-4 font-semibold">Role</th>
+                    <th className="py-3 px-4 font-semibold text-right">Total Revenue</th>
+                    <th className="py-3 px-4 font-semibold text-center">Invoices</th>
+                    <th className="py-3 px-4 font-semibold text-right">Avg Ticket Size</th>
+                    <th className="py-3 px-4 font-semibold text-center">Units Sold</th>
+                    <th className="py-3 px-4 font-semibold text-center">Login Sessions</th>
+                    <th className="py-3 px-4 font-semibold text-center">Last Active</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60 text-slate-200">
+                  {staffAnalytics.map((staff, idx) => (
+                    <tr key={staff.id} className="hover:bg-slate-800/40 transition">
+                      <td className="py-3 px-4">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-7 h-7 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center font-bold text-amber-400 text-xs shrink-0">
+                            {staff.name.charAt(0).toUpperCase()}
+                          </div>
+                          <div>
+                            <div className="font-bold text-white flex items-center gap-1.5">
+                              <span>{staff.name}</span>
+                              {idx === 0 && staff.totalRevenue > 0 && (
+                                <span className="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[9px] font-bold">
+                                  Top Seller
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[10px] text-slate-400">{staff.email}</div>
+                          </div>
+                        </div>
+                      </td>
+
+                      <td className="py-3 px-4">
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                            staff.role === 'admin'
+                              ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                              : staff.role === 'manager'
+                              ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                              : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                          }`}
+                        >
+                          {staff.role}
+                        </span>
+                      </td>
+
+                      <td className="py-3 px-4 text-right font-black text-emerald-400">
+                        Rs {staff.totalRevenue.toLocaleString()}
+                      </td>
+
+                      <td className="py-3 px-4 text-center font-bold text-slate-300">
+                        {staff.totalInvoices}
+                      </td>
+
+                      <td className="py-3 px-4 text-right font-bold text-cyan-400">
+                        Rs {staff.avgTransactionSize.toLocaleString()}
+                      </td>
+
+                      <td className="py-3 px-4 text-center text-slate-300 font-medium">
+                        {staff.totalItemsSold} units
+                      </td>
+
+                      <td className="py-3 px-4 text-center">
+                        <span className="px-2 py-0.5 rounded bg-slate-800 text-purple-300 border border-slate-700 font-mono text-[11px] font-bold">
+                          {staff.loginCount} logins
+                        </span>
+                      </td>
+
+                      <td className="py-3 px-4 text-center text-[11px] text-slate-400">
+                        {staff.lastLogin ? new Date(staff.lastLogin).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Recent'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      ) : (
+        /* ================== SECURITY, BACKUPS & AUDIT LOGS VIEW ================== */
+        <div className="space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight flex items-center gap-2">
             <Shield className="w-6 h-6 text-amber-400" />
             Security Audit, RBAC & Automated Database Backups
           </h2>
@@ -244,6 +639,15 @@ export const SecurityAuditModule: React.FC<SecurityAuditModuleProps> = ({
           <div className="flex items-center gap-2">
             <button
               type="button"
+              onClick={handlePurgeExpiredBackups}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-300 border border-red-500/30 rounded-lg text-xs font-bold transition cursor-pointer"
+              title="Deletes backup files older than configured retention period (30 or 60 days)"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Clean Expired Backups
+            </button>
+            <button
+              type="button"
               onClick={handleTriggerDailyBackupNow}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-slate-950 rounded-lg text-xs font-bold transition shadow-md shadow-emerald-500/20 cursor-pointer"
             >
@@ -255,9 +659,9 @@ export const SecurityAuditModule: React.FC<SecurityAuditModuleProps> = ({
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
           <div className="p-3 bg-slate-900/80 rounded-xl border border-slate-800">
-            <span className="text-slate-400 block text-[11px]">Daily Backup Retention</span>
-            <span className="text-white font-bold text-sm mt-0.5 block">14-Day Rolling History</span>
-            <span className="text-emerald-400 text-[10px]">Auto-purges older snapshots</span>
+            <span className="text-slate-400 block text-[11px]">Daily Backup Auto-Retention</span>
+            <span className="text-white font-bold text-sm mt-0.5 block">{settings.backupRetentionDays || 30}-Day Auto-Clean Policy</span>
+            <span className="text-emerald-400 text-[10px]">Auto-deletes files older than {settings.backupRetentionDays || 30} days</span>
           </div>
 
           <div className="p-3 bg-slate-900/80 rounded-xl border border-slate-800">
@@ -391,7 +795,35 @@ export const SecurityAuditModule: React.FC<SecurityAuditModuleProps> = ({
               </div>
             </div>
 
-            {/* Auto Print Receipt Toggle */}
+            {/* Auto-Delete Old Backups Retention Setting */}
+            <div className="p-3.5 bg-slate-900 rounded-xl border border-slate-800 flex flex-col justify-between">
+              <div>
+                <span className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                  <Shield className="w-4 h-4 text-emerald-400" />
+                  Auto-Delete Old Backup Files (Local Storage)
+                </span>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Automatically purge local backup files older than specified days to keep storage clean
+                </p>
+              </div>
+              <div className="mt-2">
+                <select
+                  value={settings.backupRetentionDays || 30}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      backupRetentionDays: Number(e.target.value) as any,
+                    })
+                  }
+                  className="w-full px-3 py-1.5 bg-slate-950 border border-slate-700 rounded-lg text-xs font-bold text-white focus:border-amber-400 focus:outline-none"
+                >
+                  <option value={30}>Delete Backups Older Than 30 Days (Recommended)</option>
+                  <option value={60}>Delete Backups Older Than 60 Days</option>
+                  <option value={90}>Delete Backups Older Than 90 Days</option>
+                  <option value={14}>Delete Backups Older Than 14 Days</option>
+                </select>
+              </div>
+            </div>
             <div className="p-3.5 bg-slate-900 rounded-xl border border-slate-800 flex flex-col justify-between">
               <div>
                 <span className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
@@ -614,12 +1046,34 @@ export const SecurityAuditModule: React.FC<SecurityAuditModuleProps> = ({
 
       {/* Immutable Audit Logs Table */}
       <div className="bg-slate-950/80 rounded-2xl border border-slate-800 overflow-hidden shadow-xl">
-        <div className="p-4 border-b border-slate-800 flex items-center justify-between">
+        <div className="p-4 border-b border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
             <History className="w-4 h-4 text-amber-400" />
-            Immutable Audit Trail ({logs.length} Logged Actions)
+            Immutable Audit Trail ({filteredLogs.length} {logFilter === 'critical' ? 'Critical' : 'Total'} Actions)
           </h3>
-          <span className="text-[11px] text-slate-500">Auto-recorded for non-repudiation</span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setLogFilter('all')}
+              className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                logFilter === 'all'
+                  ? 'bg-amber-500 text-slate-950'
+                  : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+              }`}
+            >
+              All Actions ({logs.length})
+            </button>
+            <button
+              onClick={() => setLogFilter('critical')}
+              className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                logFilter === 'critical'
+                  ? 'bg-red-500 text-white shadow-md shadow-red-500/20'
+                  : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+              }`}
+            >
+              <AlertTriangle className="w-3.5 h-3.5" />
+              Critical Action History
+            </button>
+          </div>
         </div>
 
         <div className="overflow-x-auto max-h-96">
@@ -633,14 +1087,14 @@ export const SecurityAuditModule: React.FC<SecurityAuditModuleProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800">
-              {logs.length === 0 ? (
+              {filteredLogs.length === 0 ? (
                 <tr>
                   <td colSpan={4} className="p-6 text-center text-slate-500">
-                    No actions logged yet.
+                    No matching audit logs found.
                   </td>
                 </tr>
               ) : (
-                logs.map((log) => (
+                filteredLogs.map((log) => (
                   <tr key={log.id} className="hover:bg-slate-900/40">
                     <td className="p-3 text-slate-400 whitespace-nowrap">{log.timestamp}</td>
                     <td className="p-3 font-semibold text-slate-200">{log.userEmail}</td>
@@ -657,6 +1111,8 @@ export const SecurityAuditModule: React.FC<SecurityAuditModuleProps> = ({
           </table>
         </div>
       </div>
+        </div>
+      )}
     </div>
   );
 };

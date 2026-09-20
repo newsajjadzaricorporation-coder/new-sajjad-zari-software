@@ -23,6 +23,7 @@ import {
   TrendingUp,
   BarChart3,
   CalendarDays,
+  Clock,
   ArrowUp,
   Download,
 } from 'lucide-react';
@@ -99,15 +100,20 @@ const SupplierKhataModuleComponent: React.FC<SupplierKhataModuleProps> = ({
   // New Purchase Inward Form State
   const [selectedSupplierId, setSelectedSupplierId] = useState<string>(suppliers[0]?.id || '');
   const [purchasePaymentMethod, setPurchasePaymentMethod] = useState<'cash' | 'credit' | 'bank'>('cash');
+  const [purchaseDueDate, setPurchaseDueDate] = useState<string>(
+    () => new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+  );
   const [purchaseNotes, setPurchaseNotes] = useState('');
   const [purchaseItems, setPurchaseItems] = useState<
     { productId: string; quantity: number; costPrice: number }[]
   >([]);
 
+  const [purchasesRefreshKey, setPurchasesRefreshKey] = useState(0);
+
   // Get all purchases from OfflineDB
   const purchases: PurchaseOrder[] = useMemo(() => {
     return OfflineDB.getPurchases();
-  }, [suppliers, products]); // re-evaluate when refreshed
+  }, [suppliers, products, purchasesRefreshKey]);
 
   // Supplier payables total
   const totalPayables = useMemo(() => {
@@ -359,6 +365,7 @@ const SupplierKhataModuleComponent: React.FC<SupplierKhataModuleProps> = ({
     });
     setSelectedPurchaseIds([]);
     setIsBatchPurchaseDeleteOpen(false);
+    setPurchasesRefreshKey((prev) => prev + 1);
     onRefreshData();
   };
 
@@ -428,6 +435,8 @@ const SupplierKhataModuleComponent: React.FC<SupplierKhataModuleProps> = ({
       totalAmount: purchaseGrossTotal,
       paidAmount: purchasePaymentMethod === 'credit' ? 0 : purchaseGrossTotal,
       paymentMethod: purchasePaymentMethod,
+      dueDate: purchaseDueDate,
+      dueDateTimestamp: new Date(purchaseDueDate).getTime(),
       notes: purchaseNotes,
       receivedBy: currentUser.displayName || currentUser.email,
     };
@@ -436,6 +445,7 @@ const SupplierKhataModuleComponent: React.FC<SupplierKhataModuleProps> = ({
     setIsPurchaseModalOpen(false);
     setPurchaseItems([]);
     setPurchaseNotes('');
+    setPurchasesRefreshKey((prev) => prev + 1);
     onRefreshData();
   };
 
@@ -502,6 +512,7 @@ const SupplierKhataModuleComponent: React.FC<SupplierKhataModuleProps> = ({
     if (!purchaseToDelete) return;
     OfflineDB.deletePurchase(purchaseToDelete.id, currentUser.email);
     setPurchaseToDelete(null);
+    setPurchasesRefreshKey((prev) => prev + 1);
     onRefreshData();
   };
 
@@ -1133,17 +1144,45 @@ const SupplierKhataModuleComponent: React.FC<SupplierKhataModuleProps> = ({
                           </div>
                         </td>
                         <td className="p-3.5 whitespace-nowrap">
-                          <span
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                              pur.paymentMethod === 'cash'
-                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                                : pur.paymentMethod === 'credit'
-                                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                                : 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
-                            }`}
-                          >
-                            {pur.paymentMethod === 'credit' ? 'Credit Khata' : pur.paymentMethod}
-                          </span>
+                          <div className="flex flex-col gap-1 items-start">
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                                pur.paymentMethod === 'cash'
+                                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                  : pur.paymentMethod === 'credit'
+                                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                  : 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+                              }`}
+                            >
+                              {pur.paymentMethod === 'credit' ? 'Credit Khata' : pur.paymentMethod}
+                            </span>
+                            {pur.dueDate && (
+                              <span
+                                className={`px-2 py-0.5 rounded text-[10px] font-bold flex items-center gap-1 ${
+                                  (() => {
+                                    const diffDays = Math.ceil(
+                                      (new Date(pur.dueDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+                                    );
+                                    if ((pur.totalAmount || 0) > (pur.paidAmount || 0) && diffDays <= 3) {
+                                      return 'bg-red-500/20 text-red-300 border border-red-500/30 animate-pulse';
+                                    }
+                                    return 'bg-slate-800 text-slate-400 border border-slate-700';
+                                  })()
+                                }`}
+                              >
+                                <Clock className="w-3 h-3" />
+                                {(() => {
+                                  const diffDays = Math.ceil(
+                                    (new Date(pur.dueDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+                                  );
+                                  if ((pur.totalAmount || 0) <= (pur.paidAmount || 0)) return `Settled`;
+                                  if (diffDays < 0) return `OVERDUE (${Math.abs(diffDays)}d ago)`;
+                                  if (diffDays <= 3) return `Due in ${diffDays}d`;
+                                  return `Due: ${pur.dueDate}`;
+                                })()}
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="p-3.5 text-right font-mono font-bold text-white">
                           Rs {pur.totalAmount.toLocaleString()}
@@ -1407,6 +1446,16 @@ const SupplierKhataModuleComponent: React.FC<SupplierKhataModuleProps> = ({
                     <option value="credit">Supplier Credit / Udhaar (Adds to Payable)</option>
                     <option value="bank">Bank Transfer</option>
                   </select>
+                </div>
+
+                <div>
+                  <label className="block text-slate-400 font-semibold mb-1">Payment Due Date (واجب الادا تاریخ)</label>
+                  <input
+                    type="date"
+                    value={purchaseDueDate}
+                    onChange={(e) => setPurchaseDueDate(e.target.value)}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white focus:outline-none focus:border-amber-400 text-xs font-mono"
+                  />
                 </div>
               </div>
 

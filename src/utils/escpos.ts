@@ -99,6 +99,7 @@ export class ESCPOSPrinter {
     lines.push('');
     lines.push('Thank you for your business!');
     lines.push(settings.thermalFooterUrdu);
+    if (settings.customReceiptFooter) lines.push(settings.customReceiptFooter);
     lines.push('\n\n\n');
 
     return lines.join('\n');

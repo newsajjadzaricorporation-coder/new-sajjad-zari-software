@@ -27,6 +27,16 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { Product, UserProfile, UnitType } from '../../types';
+import {
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  CartesianGrid,
+  Cell,
+} from 'recharts';
 import { OfflineDB } from '../../services/db';
 import { CSVBulkImportModal } from './CSVBulkImportModal';
 import { BulkUpdateModal } from './BulkUpdateModal';
@@ -117,6 +127,7 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [stockFilter, setStockFilter] = useState<'all' | 'low' | 'out'>('all');
+  const [categoryChartMetric, setCategoryChartMetric] = useState<'units' | 'valuation' | 'count'>('units');
 
   // Action Loader / Progress Modal state
   const [actionLoader, setActionLoader] = useState<ActionLoaderState>({
@@ -201,6 +212,32 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
       outOfStockCount,
     };
   }, [products]);
+
+  // Category Stock Distribution Bar Chart Data & Segment Analysis
+  const categoryChartData = useMemo(() => {
+    const map = new Map<string, { category: string; units: number; valuation: number; count: number }>();
+
+    products.forEach((p) => {
+      const cat = p.category?.trim() || 'Uncategorized';
+      const existing = map.get(cat) || { category: cat, units: 0, valuation: 0, count: 0 };
+      existing.units += Number(p.stock) || 0;
+      existing.valuation += (Number(p.stock) || 0) * (Number(p.sellingPrice) || 0);
+      existing.count += 1;
+      map.set(cat, existing);
+    });
+
+    const arr = Array.from(map.values());
+
+    if (categoryChartMetric === 'units') {
+      arr.sort((a, b) => b.units - a.units);
+    } else if (categoryChartMetric === 'valuation') {
+      arr.sort((a, b) => b.valuation - a.valuation);
+    } else {
+      arr.sort((a, b) => b.count - a.count);
+    }
+
+    return arr;
+  }, [products, categoryChartMetric]);
 
   // Filtered products with real-time fuzzy search & natural language query parser
   const filteredProducts = useMemo(() => {
@@ -898,6 +935,136 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
               </button>
             </div>
             <div className="text-[11px] text-slate-500 mt-1">Click to filter table</div>
+          </div>
+        </div>
+
+        {/* Category Stock Distribution & Segment Performance Bar Chart */}
+        <div className="p-4 rounded-2xl bg-slate-900/80 border border-slate-800/90 shadow-md space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                <Layers className="w-4 h-4" />
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                  <span>Stock Distribution & Category Segments</span>
+                  <span className="text-xs text-amber-400 font-urdu font-normal">(کیٹیگری وائز اسٹاک ڈسٹریبیوشن)</span>
+                </h4>
+                <p className="text-xs text-slate-400">
+                  Analyze inventory concentration across categories. Click any bar to filter product table.
+                </p>
+              </div>
+            </div>
+
+            {/* Metric Toggle Buttons */}
+            <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-xl border border-slate-800 shrink-0">
+              <button
+                type="button"
+                onClick={() => setCategoryChartMetric('units')}
+                className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                  categoryChartMetric === 'units'
+                    ? 'bg-amber-500 text-slate-950 shadow-sm'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Stock Units
+              </button>
+              <button
+                type="button"
+                onClick={() => setCategoryChartMetric('valuation')}
+                className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                  categoryChartMetric === 'valuation'
+                    ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Retail Value (Rs)
+              </button>
+              <button
+                type="button"
+                onClick={() => setCategoryChartMetric('count')}
+                className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                  categoryChartMetric === 'count'
+                    ? 'bg-cyan-500 text-slate-950 shadow-sm'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Product SKUs
+              </button>
+            </div>
+          </div>
+
+          <div className="h-56 w-full pt-2">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={categoryChartData} margin={{ top: 10, right: 10, left: -10, bottom: 25 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                <XAxis
+                  dataKey="category"
+                  stroke="#64748b"
+                  fontSize={11}
+                  tickLine={false}
+                  axisLine={{ stroke: '#334155' }}
+                  interval={0}
+                  angle={-15}
+                  textAnchor="end"
+                />
+                <YAxis
+                  stroke="#64748b"
+                  fontSize={10}
+                  tickLine={false}
+                  axisLine={false}
+                  tickFormatter={(val) =>
+                    categoryChartMetric === 'valuation' && val >= 1000
+                      ? `${Math.round(val / 1000)}k`
+                      : `${val}`
+                  }
+                />
+                <Tooltip
+                  content={({ active, payload }) => {
+                    if (active && payload && payload.length) {
+                      const item = payload[0].payload;
+                      return (
+                        <div className="bg-slate-950 border border-slate-700 p-3 rounded-xl text-xs shadow-2xl space-y-1.5 z-50">
+                          <div className="flex items-center justify-between gap-4 font-bold text-white border-b border-slate-800 pb-1.5">
+                            <span>Category: {item.category}</span>
+                            <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                              {item.count} SKUs
+                            </span>
+                          </div>
+                          <div className="space-y-1 text-slate-300">
+                            <div className="flex justify-between gap-6">
+                              <span>Total Stock Units:</span>
+                              <span className="font-bold text-amber-400">{item.units.toLocaleString()} units</span>
+                            </div>
+                            <div className="flex justify-between gap-6">
+                              <span>Estimated Retail Value:</span>
+                              <span className="font-bold text-emerald-400">Rs {item.valuation.toLocaleString()}</span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    }
+                    return null;
+                  }}
+                />
+                <Bar
+                  dataKey={categoryChartMetric}
+                  radius={[6, 6, 0, 0]}
+                  cursor="pointer"
+                  onClick={(entry: any) => {
+                    if (entry && entry.category) {
+                      setSelectedCategory(entry.category);
+                      setCurrentPage(1);
+                    }
+                  }}
+                >
+                  {categoryChartData.map((_, index) => {
+                    const colors = ['#f59e0b', '#10b981', '#06b6d4', '#6366f1', '#a855f7', '#f43f5e', '#eab308'];
+                    return <Cell key={`cell-${index}`} fill={colors[index % colors.length]} />;
+                  })}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
           </div>
         </div>
       </div>

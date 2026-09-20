@@ -17,10 +17,28 @@ import {
   Palette,
   SlidersHorizontal,
   Layers,
+  Banknote,
+  BookOpen,
+  Landmark,
+  CreditCard,
 } from 'lucide-react';
 import { SaleInvoice, ShopSettings } from '../types';
 import { generateBarcodeSvg } from '../utils/barcode';
 import { ESCPOSPrinter } from '../utils/escpos';
+
+const renderPaymentMethodIcon = (method: string, sizeClass = 'w-4 h-4') => {
+  const m = (method || '').toLowerCase();
+  if (m.includes('cash')) {
+    return <Banknote className={`${sizeClass} text-emerald-700 inline-block align-text-bottom mr-1`} />;
+  }
+  if (m.includes('credit') || m.includes('udhaar') || m.includes('khata')) {
+    return <BookOpen className={`${sizeClass} text-amber-700 inline-block align-text-bottom mr-1`} />;
+  }
+  if (m.includes('bank') || m.includes('card') || m.includes('transfer') || m.includes('online')) {
+    return <Landmark className={`${sizeClass} text-blue-700 inline-block align-text-bottom mr-1`} />;
+  }
+  return <CreditCard className={`${sizeClass} text-slate-700 inline-block align-text-bottom mr-1`} />;
+};
 
 interface PrintReceiptModalProps {
   isOpen: boolean;
@@ -351,9 +369,12 @@ export const PrintReceiptModal: React.FC<PrintReceiptModalProps> = ({
                         <p className="text-[11px] font-bold uppercase text-slate-500 tracking-wider">
                           Payment Mode:
                         </p>
-                        <p className="text-sm font-bold uppercase text-slate-900">
-                          {sale.paymentMethod === 'credit' ? 'Udhaar / Credit Khata' : sale.paymentMethod}
-                        </p>
+                        <div className="flex items-center justify-end gap-1.5 mt-0.5">
+                          {renderPaymentMethodIcon(sale.paymentMethod, 'w-4 h-4')}
+                          <span className="text-sm font-bold uppercase text-slate-900">
+                            {sale.paymentMethod === 'credit' ? 'Udhaar / Credit Khata' : sale.paymentMethod}
+                          </span>
+                        </div>
                       </div>
                     </div>
 
@@ -473,7 +494,7 @@ export const PrintReceiptModal: React.FC<PrintReceiptModalProps> = ({
                     </div>
 
                     {/* Signatures & Footer Note */}
-                    <div className="flex justify-between pt-16 text-xs text-slate-600">
+                    <div className="flex justify-between pt-12 text-xs text-slate-600">
                       <div className="border-t border-slate-400 w-52 text-center pt-1.5 font-medium">
                         Customer Signature
                       </div>
@@ -481,6 +502,13 @@ export const PrintReceiptModal: React.FC<PrintReceiptModalProps> = ({
                         Authorized Store Stamp
                       </div>
                     </div>
+
+                    {/* Custom Receipt Footer Note */}
+                    {settings.customReceiptFooter && (
+                      <div className="mt-6 pt-3 border-t border-dashed border-slate-300 text-center text-xs text-slate-600 font-medium">
+                        {settings.customReceiptFooter}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   /* ================== THERMAL RECEIPT LAYOUT (80mm / 58mm) ================== */
@@ -521,9 +549,12 @@ export const PrintReceiptModal: React.FC<PrintReceiptModalProps> = ({
                         <span>Cashier:</span>
                         <span>{sale.cashierName}</span>
                       </div>
-                      <div className="flex justify-between">
+                      <div className="flex justify-between items-center">
                         <span>Payment:</span>
-                        <span className="font-bold uppercase">{sale.paymentMethod}</span>
+                        <span className="font-bold uppercase flex items-center">
+                          {renderPaymentMethodIcon(sale.paymentMethod, 'w-3.5 h-3.5')}
+                          {sale.paymentMethod}
+                        </span>
                       </div>
                     </div>
 
@@ -615,6 +646,11 @@ export const PrintReceiptModal: React.FC<PrintReceiptModalProps> = ({
                       {showUrduDetails && (
                         <p className="font-urdu text-xs font-bold text-slate-800">
                           {settings.thermalFooterUrdu}
+                        </p>
+                      )}
+                      {settings.customReceiptFooter && (
+                        <p className="text-[10px] text-slate-700 font-medium pt-1 border-t border-slate-300">
+                          {settings.customReceiptFooter}
                         </p>
                       )}
                       <p className="text-[9px] text-slate-400">

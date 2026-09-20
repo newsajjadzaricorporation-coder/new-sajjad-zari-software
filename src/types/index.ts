@@ -158,6 +158,8 @@ export interface PurchaseOrder {
   paidAmount: number;
   paymentMethod: 'cash' | 'bank' | 'credit';
   status?: 'received' | 'pending';
+  dueDate?: string;
+  dueDateTimestamp?: number;
   notes?: string;
   receivedBy?: string;
 }
@@ -169,11 +171,12 @@ export interface ReturnItem {
   product?: Product;
   returnedQty?: number;
   returnedQuantity?: number;
+  quantity?: number;
   unitPrice?: number;
   unitRefundPrice?: number;
   refundAmount?: number;
   subtotal?: number;
-  restockOption?: 'return_to_stock' | 'damaged_waste';
+  restockOption?: 'return_to_stock' | 'damaged_waste' | 'restock' | string;
 }
 
 export interface SaleReturn {
@@ -270,6 +273,7 @@ export interface ShopSettings {
   logoUrl?: string;
   thermalHeaderNote: string;
   thermalFooterUrdu: string;
+  customReceiptFooter?: string;
   defaultPrinterMode: 'thermal80' | 'thermal58' | 'a4';
   currency: string;
   enableSoundEffects: boolean;
@@ -285,6 +289,7 @@ export interface ShopSettings {
   pointsPerHundredRupees?: number; // e.g. 1 point for every 100 Rs spent (or 1 pt/100 Rs = 1%)
   pointRedemptionRate?: number; // e.g. 1 point = 1 Rs
   minPointsToRedeem?: number; // minimum points needed to redeem (e.g. 50)
+  backupRetentionDays?: 14 | 30 | 60 | 90;
 }
 
 export interface CSVValidationItem {
