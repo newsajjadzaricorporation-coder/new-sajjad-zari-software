@@ -22,6 +22,7 @@ export interface Product {
   sellingPrice: number;
   stock: number;
   minStockAlert: number;
+  minMarginPercent?: number; // Minimum acceptable profit margin percentage threshold
   unit: UnitType;
   supplierId?: string;
   notes?: string;
@@ -266,6 +267,7 @@ export interface ShopSettings {
   tagline: string;
   phone: string;
   address: string;
+  logoUrl?: string;
   thermalHeaderNote: string;
   thermalFooterUrdu: string;
   defaultPrinterMode: 'thermal80' | 'thermal58' | 'a4';

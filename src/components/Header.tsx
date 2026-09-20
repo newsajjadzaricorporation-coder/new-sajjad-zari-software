@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import {
   Sparkles,
   Wifi,
@@ -199,12 +200,14 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
             )}
 
-            {/* Day / Night Mode Toggle */}
-            <button
+            {/* Day / Night Mode Toggle with Smooth CSS & Motion Cross-Fade */}
+            <motion.button
+              whileTap={{ scale: 0.9 }}
+              whileHover={{ scale: 1.06 }}
               onClick={onToggleTheme}
-              className={`p-1.5 rounded-lg border transition cursor-pointer flex items-center justify-center ${
+              className={`relative p-2 rounded-xl border transition-colors duration-300 cursor-pointer flex items-center justify-center overflow-hidden ${
                 theme === 'light'
-                  ? 'bg-amber-100/90 text-amber-900 border-amber-300/80 shadow-sm hover:bg-amber-200'
+                  ? 'bg-amber-100/90 text-amber-900 border-amber-300 shadow-sm hover:bg-amber-200'
                   : 'bg-slate-900 text-amber-400 border-slate-800 hover:border-slate-700 hover:text-amber-300'
               }`}
               title={
@@ -213,12 +216,32 @@ export const Header: React.FC<HeaderProps> = ({
                   : 'Switch to Day Mode (Light Theme) [Ctrl+Shift+D]'
               }
             >
-              {theme === 'light' ? (
-                <Sun className="w-4 h-4 text-amber-600 animate-spin-slow" />
-              ) : (
-                <Moon className="w-4 h-4 text-amber-400" />
-              )}
-            </button>
+              <AnimatePresence mode="wait" initial={false}>
+                {theme === 'light' ? (
+                  <motion.div
+                    key="sun-theme"
+                    initial={{ opacity: 0, rotate: -90, scale: 0.6 }}
+                    animate={{ opacity: 1, rotate: 0, scale: 1 }}
+                    exit={{ opacity: 0, rotate: 90, scale: 0.6 }}
+                    transition={{ duration: 0.25, ease: 'easeOut' }}
+                    className="flex items-center justify-center"
+                  >
+                    <Sun className="w-4 h-4 text-amber-600" />
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key="moon-theme"
+                    initial={{ opacity: 0, rotate: 90, scale: 0.6 }}
+                    animate={{ opacity: 1, rotate: 0, scale: 1 }}
+                    exit={{ opacity: 0, rotate: -90, scale: 0.6 }}
+                    transition={{ duration: 0.25, ease: 'easeOut' }}
+                    className="flex items-center justify-center"
+                  >
+                    <Moon className="w-4 h-4 text-amber-400" />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </motion.button>
 
             {/* Sound Toggle */}
             <button

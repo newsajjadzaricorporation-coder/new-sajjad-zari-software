@@ -24,11 +24,13 @@ import {
   Tag,
   AlertCircle,
   FileDown,
+  Sparkles,
 } from 'lucide-react';
 import { Product, UserProfile, UnitType } from '../../types';
 import { OfflineDB } from '../../services/db';
 import { CSVBulkImportModal } from './CSVBulkImportModal';
 import { BulkUpdateModal } from './BulkUpdateModal';
+import { SuggestCategoriesModal } from './SuggestCategoriesModal';
 import { PaginationControls } from '../common/PaginationControls';
 import { TableSkeleton } from '../common/SkeletonLoaders';
 import { exportToCSV } from '../../utils/csvExport';
@@ -154,6 +156,9 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
   const [customMoveCategory, setCustomMoveCategory] = useState<string>('');
   const [moveCategorySafetyConfirmed, setMoveCategorySafetyConfirmed] = useState(false);
 
+  // AI Suggest Categories State
+  const [isSuggestCategoriesModalOpen, setIsSuggestCategoriesModalOpen] = useState(false);
+
   // Selected Product Objects for Bulk Actions
   const selectedProducts = useMemo(
     () => products.filter((p) => selectedProductIds.includes(p.id)),
@@ -162,6 +167,7 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
 
   // CSV Import State
   const [isCsvModalOpen, setIsCsvModalOpen] = useState(false);
+  const [isBulkImportModalOpen, setIsBulkImportModalOpen] = useState(false);
   const [csvText, setCsvText] = useState('');
   const [csvImportResult, setCsvImportResult] = useState<{ successCount: number; errors: string[] } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -196,28 +202,55 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
     };
   }, [products]);
 
-  // Filtered products with real-time fuzzy search
+  // Filtered products with real-time fuzzy search & natural language query parser
   const filteredProducts = useMemo(() => {
-    const q = searchQuery.toLowerCase().trim();
+    const rawQuery = searchQuery.toLowerCase().trim();
+
+    // Natural Language Query Parsing (e.g., "show gold items under 5000", "below 1000", "over 2000")
+    let maxPrice: number | null = null;
+    let minPrice: number | null = null;
+    let keywordQuery = rawQuery;
+
+    const underMatch = rawQuery.match(/(?:under|below|less than|max)\s+(\d+)/i);
+    if (underMatch) {
+      maxPrice = parseInt(underMatch[1], 10);
+      keywordQuery = keywordQuery.replace(underMatch[0], '').trim();
+    }
+
+    const overMatch = rawQuery.match(/(?:over|above|more than|min)\s+(\d+)/i);
+    if (overMatch) {
+      minPrice = parseInt(overMatch[1], 10);
+      keywordQuery = keywordQuery.replace(overMatch[0], '').trim();
+    }
+
+    // Clean conversational filler words
+    keywordQuery = keywordQuery
+      .replace(/^(show|find|list|search|get)\s*(me)?\s*/i, '')
+      .replace(/\s+(items|products|goods)\b/gi, '')
+      .trim();
 
     return products.filter((p) => {
       const matchCat = selectedCategory === 'All' || p.category === selectedCategory;
 
       let matchSearch = true;
-      if (q) {
+      if (keywordQuery) {
         matchSearch =
-          fuzzySearchMatch(p.name, q) ||
-          fuzzySearchMatch(p.sku, q) ||
-          fuzzySearchMatch(p.category, q) ||
-          (p.urduName ? p.urduName.toLowerCase().includes(q) || fuzzySearchMatch(p.urduName, q) : false) ||
-          p.barcode.toLowerCase().includes(q);
+          fuzzySearchMatch(p.name, keywordQuery) ||
+          fuzzySearchMatch(p.sku, keywordQuery) ||
+          fuzzySearchMatch(p.category, keywordQuery) ||
+          (p.urduName ? p.urduName.toLowerCase().includes(keywordQuery) || fuzzySearchMatch(p.urduName, keywordQuery) : false) ||
+          p.barcode.toLowerCase().includes(keywordQuery);
       }
+
+      let matchPrice = true;
+      if (maxPrice !== null && p.sellingPrice > maxPrice) matchPrice = false;
+      if (minPrice !== null && p.sellingPrice < minPrice) matchPrice = false;
 
       let matchStock = true;
       if (stockFilter === 'low') matchStock = p.stock > 0 && p.stock <= p.minStockAlert;
       if (stockFilter === 'out') matchStock = p.stock <= 0;
 
-      return matchCat && matchSearch && matchStock;
+      return matchCat && matchSearch && matchPrice && matchStock;
     });
   }, [products, selectedCategory, searchQuery, stockFilter]);
 
@@ -745,17 +778,24 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
 
             {isAdmin && (
               <button
-                onClick={() => {
-                  setCsvText('');
-                  setCsvImportResult(null);
-                  setIsCsvModalOpen(true);
-                }}
-                className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-semibold transition"
+                onClick={() => setIsBulkImportModalOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold transition shadow-sm cursor-pointer"
+                title="Bulk import products from CSV with validation preview and mapping"
               >
-                <Upload className="w-4 h-4 text-blue-400" />
-                Import CSV
+                <FileSpreadsheet className="w-4 h-4" />
+                Bulk CSV Import
               </button>
             )}
+
+            {/* AI Suggest Categories Button in Header */}
+            <button
+              onClick={() => setIsSuggestCategoriesModalOpen(true)}
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-purple-500/20 to-amber-500/20 hover:from-purple-500/30 hover:to-amber-500/30 text-amber-300 border border-amber-500/40 rounded-xl text-xs font-bold transition shadow-sm hover:shadow-amber-500/10 cursor-pointer"
+              title="Use Gemini AI to analyze product names & descriptions and suggest categories for batch updates"
+            >
+              <Sparkles className="w-4 h-4 text-amber-400" />
+              <span>Suggest Categories (AI)</span>
+            </button>
 
             {selectedProductIds.length > 0 && (
               <button
@@ -945,6 +985,16 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
             >
               <Sliders className="w-3.5 h-3.5" />
               <span>Bulk Update Stock & Price</span>
+            </button>
+
+            {/* Suggest Categories with AI */}
+            <button
+              onClick={() => setIsSuggestCategoriesModalOpen(true)}
+              className="px-3.5 py-1.5 bg-gradient-to-r from-purple-600/30 to-amber-600/30 hover:from-purple-600/40 hover:to-amber-600/40 text-amber-300 border border-amber-500/40 rounded-xl font-bold flex items-center gap-1.5 shadow-md transition cursor-pointer"
+              title="Use Gemini AI to analyze and suggest categories for selected products"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+              <span>Suggest Categories (AI)</span>
             </button>
 
             {/* Move to Category Dropdown / Button */}
@@ -1865,6 +1915,27 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
         currentUser={currentUser}
         onApply={handleApplyBulkUpdate}
         onRemoveFromSelection={handleRemoveFromBulkSelection}
+      />
+
+      {/* ================= CSV BULK IMPORT MODAL ================= */}
+      <CSVBulkImportModal
+        isOpen={isBulkImportModalOpen}
+        onClose={() => setIsBulkImportModalOpen(false)}
+        currentUser={currentUser}
+        onSuccess={onRefreshProducts}
+      />
+
+      {/* ================= AI SUGGEST CATEGORIES MODAL ================= */}
+      <SuggestCategoriesModal
+        isOpen={isSuggestCategoriesModalOpen}
+        onClose={() => setIsSuggestCategoriesModalOpen(false)}
+        products={products}
+        selectedProductIds={selectedProductIds}
+        currentUser={currentUser}
+        onApplied={() => {
+          setSelectedProductIds([]);
+          onRefreshProducts();
+        }}
       />
 
       {/* Global Batch Action Progress Loader */}

@@ -115,6 +115,14 @@ export default function App() {
   }, [theme]);
 
   const handleToggleTheme = useCallback(() => {
+    if (typeof document !== 'undefined') {
+      const root = document.documentElement;
+      root.classList.add('theme-transitioning');
+      setTimeout(() => {
+        root.classList.remove('theme-transitioning');
+      }, 450);
+    }
+
     setThemeState((prev) => {
       const next = prev === 'light' ? 'dark' : 'light';
       OfflineDB.setTheme(next);

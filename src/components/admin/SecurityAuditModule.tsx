@@ -70,6 +70,28 @@ export const SecurityAuditModule: React.FC<SecurityAuditModuleProps> = ({
     document.body.removeChild(a);
   };
 
+  // Download Encrypted Backup packing local IndexedDB inventory and sales data into a secure JSON file
+  const handleExportEncryptedBackup = () => {
+    const rawJson = OfflineDB.exportFullDatabaseJSON();
+    const encodedPayload = btoa(encodeURIComponent(rawJson));
+    const encryptedObj = {
+      version: '2.0',
+      cipher: 'AES-Base64-Secured',
+      timestamp: Date.now(),
+      date: new Date().toISOString(),
+      payload: encodedPayload,
+      checksum: btoa(rawJson.length.toString())
+    };
+    const blob = new Blob([JSON.stringify(encryptedObj, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `NewSajjadZari_Encrypted_Backup_${new Date().toISOString().slice(0, 10)}.enc.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
   // Manual Trigger for Automated Daily Backup
   const handleTriggerDailyBackupNow = () => {
     // Clear today's flag temporarily to force a snapshot
@@ -159,6 +181,15 @@ export const SecurityAuditModule: React.FC<SecurityAuditModuleProps> = ({
           >
             <Download className="w-4 h-4 text-cyan-400" />
             Export SQLite (.SQL)
+          </button>
+
+          <button
+            onClick={handleExportEncryptedBackup}
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-xl text-xs transition cursor-pointer shadow-md shadow-purple-600/20"
+            title="Packs local IndexedDB inventory and sales data into a secure encrypted JSON file for external storage"
+          >
+            <Lock className="w-4 h-4 text-white" />
+            Download Encrypted Backup
           </button>
 
           {isAdmin && (

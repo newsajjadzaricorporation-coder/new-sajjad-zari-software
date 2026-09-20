@@ -934,6 +934,31 @@ const POSModuleComponent: React.FC<POSModuleProps> = ({
             </div>
           )}
 
+          {/* Quick Add Panel for Frequent Items */}
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 pt-0.5 no-scrollbar text-xs">
+            <span className="text-slate-400 font-semibold shrink-0 flex items-center gap-1">
+              <Sparkles className="w-3 h-3 text-amber-400" />
+              Quick Add:
+            </span>
+            {products.slice(0, 6).map((item) => (
+              <button
+                key={`quick-${item.id}`}
+                type="button"
+                onClick={() => handleAddToCart(item)}
+                disabled={item.stock <= 0}
+                className={`px-2.5 py-1 rounded-lg border text-xs font-medium flex items-center gap-1.5 shrink-0 transition cursor-pointer ${
+                  item.stock > 0
+                    ? 'bg-slate-900 hover:bg-slate-800 border-slate-700 text-slate-200 hover:border-amber-500/50'
+                    : 'bg-slate-900/50 border-slate-800 text-slate-500 cursor-not-allowed opacity-60'
+                }`}
+                title={`Add ${item.name} to cart (Rs ${item.sellingPrice})`}
+              >
+                <span className="truncate max-w-[110px]">{item.name}</span>
+                <span className="text-amber-400 font-bold font-mono">Rs {item.sellingPrice}</span>
+              </button>
+            ))}
+          </div>
+
           {/* Secondary Filter Controls: Stock Availability, Supplier & Sorter */}
           <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
             {/* Stock Availability Pill Switcher */}
@@ -2043,6 +2068,13 @@ const POSModuleComponent: React.FC<POSModuleProps> = ({
           </div>
         </div>
       )}
+
+      {/* Camera Barcode Scanner Modal */}
+      <CameraBarcodeScannerModal
+        isOpen={isScannerOpen}
+        onClose={() => setIsScannerOpen(false)}
+        onScan={handleBarcodeScanned}
+      />
     </div>
   );
 };

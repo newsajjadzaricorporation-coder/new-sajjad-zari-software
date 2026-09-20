@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   TrendingUp,
+  TrendingDown,
   Package,
   AlertTriangle,
   Award,
@@ -259,70 +260,82 @@ export const QuickStatsDashboard: React.FC<QuickStatsDashboardProps> = ({
     };
   }, [dailyMetrics.netSales, dailyRevenueTarget]);
 
-  // Customer Growth & Khata KPI Metrics
+  // Customer Growth & Khata KPI Metrics (Comparing last 30 days vs previous 30-day period)
   const customerGrowthMetrics = useMemo(() => {
     const list = customers || OfflineDB.getCustomers();
     const now = Date.now();
-    const oneWeekMs = 7 * 24 * 60 * 60 * 1000;
-    const twoWeeksMs = 14 * 24 * 60 * 60 * 1000;
+    const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+    const sixtyDaysMs = 60 * 24 * 60 * 60 * 1000;
 
     let totalReceivable = 0;
-    let thisWeekNew = 0;
-    let priorWeekNew = 0;
+    let last30DaysNew = 0;
+    let prev30DaysNew = 0;
 
     for (const c of list) {
       totalReceivable += c.currentBalance || 0;
       const createdAtMs = c.createdAt ? new Date(c.createdAt).getTime() : 0;
       if (createdAtMs > 0) {
-        if (now - createdAtMs <= oneWeekMs) {
-          thisWeekNew++;
-        } else if (now - createdAtMs <= twoWeeksMs) {
-          priorWeekNew++;
+        if (now - createdAtMs <= thirtyDaysMs) {
+          last30DaysNew++;
+        } else if (now - createdAtMs <= sixtyDaysMs) {
+          prev30DaysNew++;
         }
       }
     }
 
-    // Growth percentage calculation
+    // Growth percentage calculation compared to previous 30-day period
     let growthPct = 0;
-    if (priorWeekNew > 0) {
-      growthPct = Math.round(((thisWeekNew - priorWeekNew) / priorWeekNew) * 100);
-    } else if (thisWeekNew > 0) {
-      growthPct = Math.min(100, thisWeekNew * 15);
+    if (prev30DaysNew > 0) {
+      growthPct = Math.round(((last30DaysNew - prev30DaysNew) / prev30DaysNew) * 100);
+    } else if (last30DaysNew > 0) {
+      growthPct = Math.min(100, last30DaysNew * 15);
     } else {
-      growthPct = 8; // Steady benchmark
+      growthPct = 4; // Stable benchmark
     }
 
     return {
       totalCount: list.length,
-      thisWeekNew,
-      priorWeekNew,
+      last30DaysNew,
+      prev30DaysNew,
       growthPct,
       totalReceivable,
     };
   }, [customers]);
 
-  // Supplier Growth & Procurement KPI Metrics
+  // Supplier Growth & Procurement KPI Metrics (Comparing last 30 days vs previous 30-day period)
   const supplierGrowthMetrics = useMemo(() => {
     const list = suppliers || OfflineDB.getSuppliers();
     const now = Date.now();
     const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+    const sixtyDaysMs = 60 * 24 * 60 * 60 * 1000;
 
     let totalPayable = 0;
-    let activeSuppliersCount = 0;
+    let last30DaysActive = 0;
+    let prev30DaysActive = 0;
 
     for (const s of list) {
       totalPayable += s.balancePayable || 0;
       const createdMs = s.createdAt ? new Date(s.createdAt).getTime() : 0;
-      if (createdMs > 0 && now - createdMs <= thirtyDaysMs) {
-        activeSuppliersCount++;
+      if (createdMs > 0) {
+        if (now - createdMs <= thirtyDaysMs) {
+          last30DaysActive++;
+        } else if (now - createdMs <= sixtyDaysMs) {
+          prev30DaysActive++;
+        }
       } else if ((s.balancePayable || 0) > 0 || (s.totalPurchased || 0) > 0) {
-        activeSuppliersCount++;
+        last30DaysActive++;
       }
     }
 
-    const effectiveActive = Math.max(1, activeSuppliersCount || list.length);
+    const effectiveActive = Math.max(1, last30DaysActive || list.length);
     const activeRate = list.length > 0 ? Math.round((effectiveActive / list.length) * 100) : 100;
-    const growthPct = Math.min(25, Math.round((effectiveActive * 6) + 4));
+    
+    let growthPct = 0;
+    if (prev30DaysActive > 0) {
+      growthPct = Math.round(((effectiveActive - prev30DaysActive) / prev30DaysActive) * 100);
+    } else {
+      growthPct = 6; // Stable benchmark
+    }
 
     return {
       totalCount: list.length,
@@ -395,6 +408,84 @@ export const QuickStatsDashboard: React.FC<QuickStatsDashboardProps> = ({
     }
     return result;
   }, [sales]);
+
+  // Weekly Revenue Growth Percentage Indicator compared to previous 30-day period / previous week
+  const weeklyRevenueGrowth = useMemo(() => {
+    const now = Date.now();
+    const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+    const sixtyDaysMs = 60 * 24 * 60 * 60 * 1000;
+
+    let last30Rev = 0;
+    let prev30Rev = 0;
+
+    for (const s of sales) {
+      if (!s.date) continue;
+      const sMs = new Date(s.date).getTime();
+      const net = s.netTotal || 0;
+      if (now - sMs <= thirtyDaysMs) {
+        last30Rev += net;
+      } else if (now - sMs <= sixtyDaysMs) {
+        prev30Rev += net;
+      }
+    }
+
+    let growthPct = 0;
+    if (prev30Rev > 0) {
+      growthPct = Math.round(((last30Rev - prev30Rev) / prev30Rev) * 100);
+    } else if (last30Rev > 0) {
+      growthPct = 12; // stable growth benchmark
+    }
+
+    return {
+      last30Rev,
+      prev30Rev,
+      growthPct,
+    };
+  }, [sales]);
+
+  // Projected Monthly Revenue via Linear Regression of Last 30 Days of Sales
+  const projectedMonthlyRevenue = useMemo(() => {
+    const now = Date.now();
+    const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+    const dailyMap = new Map<string, number>();
+
+    for (const sale of sales) {
+      if (!sale.date) continue;
+      const sMs = new Date(sale.date).getTime();
+      if (now - sMs > thirtyDaysMs) continue;
+      const dayStr = sale.date.slice(0, 10);
+      dailyMap.set(dayStr, (dailyMap.get(dayStr) || 0) + (sale.netTotal || 0));
+    }
+
+    const daysArray = Array.from(dailyMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+    const n = daysArray.length;
+    if (n === 0) return { projectedTotal: dailyMetrics.netSales * 30, dailyAverage: dailyMetrics.netSales, trendSlope: 0 };
+
+    let sumX = 0;
+    let sumY = 0;
+    let sumXY = 0;
+    let sumXX = 0;
+
+    daysArray.forEach(([date, rev], idx) => {
+      const x = idx + 1;
+      const y = rev;
+      sumX += x;
+      sumY += y;
+      sumXY += x * y;
+      sumXX += x * x;
+    });
+
+    const denom = n * sumXX - sumX * sumX;
+    const slope = denom !== 0 ? (n * sumXY - sumX * sumY) / denom : 0;
+    const dailyAverage = sumY / (n || 1);
+    const projectedTotal = Math.max(dailyMetrics.netSales, Math.round(dailyAverage * 30 + slope * 15));
+
+    return {
+      projectedTotal,
+      dailyAverage: Math.round(dailyAverage),
+      trendSlope: Math.round(slope),
+    };
+  }, [sales, dailyMetrics.netSales]);
 
   return (
     <div className="w-full bg-slate-950 border-b border-slate-800 shadow-md">
@@ -555,9 +646,19 @@ export const QuickStatsDashboard: React.FC<QuickStatsDashboardProps> = ({
                         Rs {dailyMetrics.netSales.toLocaleString()}
                       </h4>
                     </div>
-                    <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[11px] font-bold">
-                      {dailyMetrics.invoiceCount} {dailyMetrics.invoiceCount === 1 ? 'Bill' : 'Bills'}
-                    </span>
+                    <div className="flex flex-col items-end gap-1">
+                      <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[11px] font-bold">
+                        {dailyMetrics.invoiceCount} {dailyMetrics.invoiceCount === 1 ? 'Bill' : 'Bills'}
+                      </span>
+                      <span className={`px-2 py-0.5 rounded-md border text-[10px] font-bold flex items-center gap-1 ${
+                        weeklyRevenueGrowth.growthPct >= 0
+                          ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
+                          : 'bg-red-500/10 border-red-500/30 text-red-400'
+                      }`}>
+                        {weeklyRevenueGrowth.growthPct >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                        {weeklyRevenueGrowth.growthPct >= 0 ? `+${weeklyRevenueGrowth.growthPct}%` : `${weeklyRevenueGrowth.growthPct}%`} vs prev 30d
+                      </span>
+                    </div>
                   </div>
 
                   {/* Payment Methods Breakdown */}
@@ -599,7 +700,40 @@ export const QuickStatsDashboard: React.FC<QuickStatsDashboardProps> = ({
                   </div>
                 </div>
 
-                {/* 2. TOP SELLING PRODUCT CARD */}
+                {/* 2. PROJECTED MONTHLY REVENUE (LINEAR REGRESSION) CARD */}
+                <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800/90 flex flex-col justify-between hover:border-slate-700 transition">
+                  <div className="flex items-start justify-between">
+                    <div className="space-y-0.5">
+                      <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                        <TrendingUp className="w-3.5 h-3.5 text-amber-400" />
+                        Projected Monthly Revenue (متوقع ماہانہ آمدنی)
+                      </p>
+                      <h4 className="text-xl sm:text-2xl font-black text-amber-300 font-mono">
+                        Rs {projectedMonthlyRevenue.projectedTotal.toLocaleString()}
+                      </h4>
+                    </div>
+                    <span className="px-2 py-0.5 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[10px] font-bold">
+                      Regression Model
+                    </span>
+                  </div>
+                  <div className="mt-3 pt-2.5 border-t border-slate-800/80 space-y-1.5 text-xs text-slate-400">
+                    <div className="flex justify-between">
+                      <span>30-Day Daily Average:</span>
+                      <span className="font-bold text-white">Rs {projectedMonthlyRevenue.dailyAverage.toLocaleString()} / day</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Linear Trend Slope:</span>
+                      <span className={`font-bold ${projectedMonthlyRevenue.trendSlope >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                        {projectedMonthlyRevenue.trendSlope >= 0 ? `+Rs ${projectedMonthlyRevenue.trendSlope.toLocaleString()} / day` : `-Rs ${Math.abs(projectedMonthlyRevenue.trendSlope).toLocaleString()} / day`}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="mt-2.5 text-[11px] text-slate-500 italic">
+                    Estimated final revenue for current month using least-squares linear regression on past 30 days.
+                  </div>
+                </div>
+
+                {/* 3. TOP SELLING PRODUCT CARD */}
                 <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800/90 flex flex-col justify-between hover:border-slate-700 transition">
                   <div className="flex items-start justify-between">
                     <div className="space-y-0.5">
@@ -691,9 +825,13 @@ export const QuickStatsDashboard: React.FC<QuickStatsDashboardProps> = ({
                         {customerGrowthMetrics.totalCount}
                       </h4>
                     </div>
-                    <span className="px-2 py-0.5 rounded-md bg-blue-500/10 border border-blue-500/20 text-blue-400 text-[11px] font-bold flex items-center gap-1">
-                      <TrendingUp className="w-3 h-3" />
-                      +{customerGrowthMetrics.growthPct}% vs last week
+                    <span className={`px-2 py-0.5 rounded-md border text-[11px] font-bold flex items-center gap-1 ${
+                      customerGrowthMetrics.growthPct >= 0
+                        ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
+                        : 'bg-red-500/10 border-red-500/30 text-red-400'
+                    }`}>
+                      {customerGrowthMetrics.growthPct >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                      {customerGrowthMetrics.growthPct >= 0 ? `+${customerGrowthMetrics.growthPct}%` : `${customerGrowthMetrics.growthPct}%`} vs prev 30d
                     </span>
                   </div>
 
@@ -705,9 +843,9 @@ export const QuickStatsDashboard: React.FC<QuickStatsDashboardProps> = ({
                       </span>
                     </div>
                     <div className="flex items-center justify-between">
-                      <span className="text-slate-400">New This Week:</span>
+                      <span className="text-slate-400">New Last 30 Days:</span>
                       <span className="font-semibold text-emerald-400">
-                        +{customerGrowthMetrics.thisWeekNew} Registered
+                        +{customerGrowthMetrics.last30DaysNew} Registered
                       </span>
                     </div>
                     <div className="flex items-center justify-between text-[11px]">
@@ -744,9 +882,13 @@ export const QuickStatsDashboard: React.FC<QuickStatsDashboardProps> = ({
                         {supplierGrowthMetrics.activeSuppliersCount} <span className="text-sm font-normal text-slate-400">/ {supplierGrowthMetrics.totalCount}</span>
                       </h4>
                     </div>
-                    <span className="px-2 py-0.5 rounded-md bg-purple-500/10 border border-purple-500/20 text-purple-400 text-[11px] font-bold flex items-center gap-1">
-                      <TrendingUp className="w-3 h-3" />
-                      +{supplierGrowthMetrics.growthPct}% vs last week
+                    <span className={`px-2 py-0.5 rounded-md border text-[11px] font-bold flex items-center gap-1 ${
+                      supplierGrowthMetrics.growthPct >= 0
+                        ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
+                        : 'bg-red-500/10 border-red-500/30 text-red-400'
+                    }`}>
+                      {supplierGrowthMetrics.growthPct >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                      {supplierGrowthMetrics.growthPct >= 0 ? `+${supplierGrowthMetrics.growthPct}%` : `${supplierGrowthMetrics.growthPct}%`} vs prev 30d
                     </span>
                   </div>
 

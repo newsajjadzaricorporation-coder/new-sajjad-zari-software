@@ -217,10 +217,10 @@ const ExpensesClosingModuleComponent: React.FC<ExpensesClosingModuleProps> = ({
               setIsDayEndModalOpen(true);
             }}
             className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 rounded-xl text-xs font-bold transition shadow-sm cursor-pointer"
-            title="Open printable Day End Financial Summary Report"
+            title="Open printable Financial Summary Report"
           >
             <Printer className="w-4 h-4" />
-            <span>Print Day End Summary (روزانہ رپورٹ)</span>
+            <span>Print Financial Summary</span>
           </button>
         </div>
       </div>

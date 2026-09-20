@@ -235,6 +235,57 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </p>
               </div>
 
+              {/* Company Logo Upload / URL */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5 flex items-center gap-1.5">
+                  <Store className="w-4 h-4 text-amber-400" />
+                  Company Logo / Brand Emblem (رسید کا لوگو)
+                </label>
+                <div className="flex items-center gap-4">
+                  {formData.logoUrl ? (
+                    <div className="relative w-16 h-16 rounded-xl border border-slate-700 bg-slate-950 flex items-center justify-center overflow-hidden shrink-0">
+                      <img src={formData.logoUrl} alt="Company Logo" className="w-full h-full object-contain p-1" />
+                      <button
+                        type="button"
+                        onClick={() => setFormData({ ...formData, logoUrl: '' })}
+                        className="absolute top-0.5 right-0.5 bg-red-600 hover:bg-red-500 text-white p-0.5 rounded-full text-[10px] cursor-pointer"
+                        title="Remove Logo"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="w-16 h-16 rounded-xl border border-dashed border-slate-700 bg-slate-950/50 flex items-center justify-center text-slate-500 text-[10px] shrink-0">
+                      No Logo
+                    </div>
+                  )}
+                  <div className="flex-1 space-y-2">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          const reader = new FileReader();
+                          reader.onload = (uploadEvent) => {
+                            setFormData({ ...formData, logoUrl: uploadEvent.target?.result as string });
+                          };
+                          reader.readAsDataURL(file);
+                        }
+                      }}
+                      className="block w-full text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-amber-500 file:text-slate-950 hover:file:bg-amber-400 cursor-pointer"
+                    />
+                    <input
+                      type="text"
+                      value={formData.logoUrl || ''}
+                      onChange={(e) => setFormData({ ...formData, logoUrl: e.target.value })}
+                      placeholder="Or paste image URL (https://...)"
+                      className="w-full px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:border-amber-400 focus:outline-none"
+                    />
+                  </div>
+                </div>
+              </div>
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 mb-1 flex items-center gap-1.5">

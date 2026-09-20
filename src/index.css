@@ -10,6 +10,18 @@
   }
 }
 
+/* Smooth Theme Cross-Fade Transition for Sidebar & Workspace */
+body,
+header,
+nav,
+main,
+aside,
+div {
+  transition-property: background-color, border-color, color, box-shadow;
+  transition-duration: 350ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
 .font-urdu {
   font-family: 'Noto Nastaliq Urdu', serif;
 }
@@ -324,8 +336,53 @@ body.light-mode,
     border: none !important;
   }
 
+  #printable-receipt.bw-print-mode {
+    filter: grayscale(100%) contrast(120%) !important;
+    color: #000000 !important;
+    background: #ffffff !important;
+  }
+
+  #printable-receipt.bw-print-mode * {
+    color: #000000 !important;
+    border-color: #000000 !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+
   @page {
     margin: 0;
     size: auto;
   }
 }
+
+/* Smooth Theme Cross-Fade Transition (prevents visual jarring during theme toggles) */
+html.theme-transitioning,
+html.theme-transitioning *,
+html.theme-transitioning *::before,
+html.theme-transitioning *::after {
+  transition: background-color 0.4s cubic-bezier(0.16, 1, 0.3, 1),
+              border-color 0.4s cubic-bezier(0.16, 1, 0.3, 1),
+              color 0.35s ease,
+              fill 0.35s ease,
+              box-shadow 0.4s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  transition-delay: 0s !important;
+}
+
+/* Black-and-White & Monochrome Screen / Ink-Saver Preview */
+.bw-print-mode {
+  filter: grayscale(100%) contrast(105%);
+}
+
+.bw-print-mode * {
+  color: #000000 !important;
+}
+
+.bw-print-mode .bg-slate-900 {
+  background-color: #000000 !important;
+  color: #ffffff !important;
+}
+
+.bw-print-mode .bg-slate-900 * {
+  color: #ffffff !important;
+}
+
