@@ -43,8 +43,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   const [isLoadingGoogle, setIsLoadingGoogle] = useState<boolean>(false);
   const [authMode, setAuthMode] = useState<'pin' | 'google'>('pin');
 
-  if (!isOpen) return null;
-
   const selectedUser = allUsers.find((u) => u.uid === selectedUserId) || allUsers[0];
 
   // Handle PIN Submission
@@ -167,6 +165,8 @@ export const LoginModal: React.FC<LoginModalProps> = ({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, authMode, pin, selectedUserId, canDismiss, onClose]);
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4">

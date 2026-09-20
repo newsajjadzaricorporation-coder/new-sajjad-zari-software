@@ -21,6 +21,8 @@ import {
   BookOpen,
   Landmark,
   CreditCard,
+  RefreshCw,
+  AlertTriangle,
 } from 'lucide-react';
 import { SaleInvoice, ShopSettings } from '../types';
 import { generateBarcodeSvg } from '../utils/barcode';
@@ -61,6 +63,24 @@ export const PrintReceiptModal: React.FC<PrintReceiptModalProps> = ({
   const [showBarcode, setShowBarcode] = useState(true);
   const [bluetoothStatus, setBluetoothStatus] = useState<string | null>(null);
   const [isPrintingAnim, setIsPrintingAnim] = useState(false);
+  const [printJobFailed, setPrintJobFailed] = useState(false);
+  const [retryCountdown, setRetryCountdown] = useState<number>(0);
+  const [printAttemptCount, setPrintAttemptCount] = useState<number>(0);
+
+  // Countdown timer for Quick Retry cooldown
+  useEffect(() => {
+    if (retryCountdown <= 0) return;
+    const interval = setInterval(() => {
+      setRetryCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [retryCountdown]);
 
   // Keyboard shortcut support (Ctrl+P to print, Esc to close)
   useEffect(() => {
@@ -83,10 +103,25 @@ export const PrintReceiptModal: React.FC<PrintReceiptModalProps> = ({
 
   const handleBrowserPrint = () => {
     setIsPrintingAnim(true);
-    setTimeout(() => {
-      window.print();
+    setPrintAttemptCount((prev) => prev + 1);
+
+    try {
+      setTimeout(() => {
+        window.print();
+        setIsPrintingAnim(false);
+      }, 250);
+    } catch (err) {
+      console.error('Window print error:', err);
+      setPrintJobFailed(true);
       setIsPrintingAnim(false);
-    }, 300);
+    }
+  };
+
+  const handleQuickRetry = () => {
+    if (retryCountdown > 0) return;
+    setPrintJobFailed(false);
+    setRetryCountdown(5); // 5-second countdown cooldown
+    handleBrowserPrint();
   };
 
   const handleBluetoothPrint = async () => {
@@ -663,6 +698,49 @@ export const PrintReceiptModal: React.FC<PrintReceiptModalProps> = ({
             </div>
           </div>
 
+          {/* PRINT JOB STATUS & FAILURE ALERT BANNER */}
+          {(printJobFailed || printAttemptCount > 0) && (
+            <div className={`px-5 py-2 border-t text-xs flex items-center justify-between gap-3 ${
+              printJobFailed
+                ? 'bg-red-950/40 border-red-500/30 text-red-300'
+                : 'bg-slate-950/80 border-slate-800 text-slate-400'
+            }`}>
+              <div className="flex items-center gap-2 min-w-0">
+                {printJobFailed ? (
+                  <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+                ) : (
+                  <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+                )}
+                <span className="truncate">
+                  {printJobFailed
+                    ? 'Print job failed or printer disconnected. Use Quick Retry to resend job.'
+                    : `Last print attempted (${printAttemptCount} ${printAttemptCount === 1 ? 'time' : 'times'}). Did the printer respond?`}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                {!printJobFailed && (
+                  <button
+                    type="button"
+                    onClick={() => setPrintJobFailed(true)}
+                    className="text-[11px] text-red-400 hover:text-red-300 underline cursor-pointer"
+                  >
+                    Report Print Failure
+                  </button>
+                )}
+                {printJobFailed && (
+                  <button
+                    type="button"
+                    onClick={() => setPrintJobFailed(false)}
+                    className="text-[11px] text-slate-400 hover:text-slate-200 underline cursor-pointer"
+                  >
+                    Dismiss
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* BOTTOM ACTION BAR */}
           <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-4 border-t border-slate-800 bg-slate-950/90 shrink-0">
             <div>
@@ -677,13 +755,53 @@ export const PrintReceiptModal: React.FC<PrintReceiptModalProps> = ({
               )}
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2.5 flex-wrap">
+              {/* Quick Retry Button (Enabled on Failure or Print Attempt) */}
+              {(printJobFailed || printAttemptCount > 0) && (
+                <div className="relative flex items-center">
+                  <button
+                    type="button"
+                    onClick={handleQuickRetry}
+                    disabled={retryCountdown > 0}
+                    className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold border transition shadow-lg cursor-pointer ${
+                      retryCountdown > 0
+                        ? 'bg-slate-800/80 border-slate-700 text-slate-400 cursor-not-allowed opacity-90'
+                        : 'bg-red-500/20 hover:bg-red-500/30 text-red-300 border-red-500/40 hover:border-red-400 shadow-red-500/10'
+                    }`}
+                    title={retryCountdown > 0 ? `Please wait ${retryCountdown}s before retrying` : 'Quick retry print command immediately'}
+                  >
+                    {retryCountdown > 0 ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin text-amber-400" />
+                        <span>Retry in <strong className="text-amber-300 font-mono">{retryCountdown}s</strong></span>
+                        <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping ml-0.5" />
+                      </>
+                    ) : (
+                      <>
+                        <RotateCcw className="w-3.5 h-3.5 text-red-400" />
+                        <span>Quick Retry Print</span>
+                      </>
+                    )}
+                  </button>
+
+                  {/* Visual Progress Bar Overlay during Retry Countdown */}
+                  {retryCountdown > 0 && (
+                    <div className="absolute -bottom-1 left-2 right-2 h-1 bg-slate-900 rounded-full overflow-hidden border border-slate-700">
+                      <div
+                        className="h-full bg-gradient-to-r from-amber-500 to-amber-300 transition-all duration-1000"
+                        style={{ width: `${((5 - retryCountdown) / 5) * 100}%` }}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Bluetooth Direct Thermal Button */}
               {printLayout !== 'a4' && (
                 <button
                   type="button"
                   onClick={handleBluetoothPrint}
-                  className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-xs font-semibold text-slate-200 transition cursor-pointer"
+                  className="flex items-center gap-1.5 px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-xl text-xs font-semibold text-slate-200 transition cursor-pointer"
                   title="Print directly to paired Bluetooth 58mm/80mm Thermal Printer"
                 >
                   <Bluetooth className="w-4 h-4 text-blue-400" />
