@@ -26,6 +26,7 @@ import {
   ChevronRight,
   ChevronLeft,
   Download,
+  ShoppingBag,
 } from 'lucide-react';
 import { Customer, LedgerEntry, UserProfile, ShopSettings, LoyaltyTier } from '../../types';
 import { OfflineDB } from '../../services/db';
@@ -82,7 +83,9 @@ const CustomerKhataModuleComponent: React.FC<CustomerKhataModuleProps> = ({
   const [pointsAdjustmentDelta, setPointsAdjustmentDelta] = useState<number>(50);
   const [pointsAdjustmentReason, setPointsAdjustmentReason] = useState<string>('VIP Customer Special Bonus');
 
-  // Total Outstanding Udhaar Across All Customers
+  // Customer View Tab (Ledger vs Purchase History)
+  const [customerViewTab, setCustomerViewTab] = useState<'ledger' | 'purchases'>('ledger');
+
   const totalReceivables = useMemo(() => {
     return customers.reduce((acc, c) => acc + c.currentBalance, 0);
   }, [customers]);
@@ -127,6 +130,18 @@ const CustomerKhataModuleComponent: React.FC<CustomerKhataModuleProps> = ({
     if (!selectedCustomerId) return customers[0] || null;
     return customers.find((c) => c.id === selectedCustomerId) || null;
   }, [customers, filteredCustomers, selectedCustomerId]);
+
+  // Active customer purchase history (Sale invoices)
+  const activeCustomerPurchases = useMemo(() => {
+    if (!activeCustomer) return [];
+    const allSales = OfflineDB.getSales();
+    return allSales.filter((s) => {
+      if (s.customerId && s.customerId === activeCustomer.id) return true;
+      if (s.customerName && s.customerName.toLowerCase() === activeCustomer.name.toLowerCase()) return true;
+      if (activeCustomer.phone && s.customerPhone && s.customerPhone.replace(/[^0-9]/g, '') === activeCustomer.phone.replace(/[^0-9]/g, '')) return true;
+      return false;
+    }).sort((a, b) => b.timestamp - a.timestamp);
+  }, [activeCustomer]);
 
   // Active customer loyalty details
   const activeCustomerLoyalty = useMemo(() => {
@@ -820,19 +835,102 @@ const CustomerKhataModuleComponent: React.FC<CustomerKhataModuleProps> = ({
               </div>
             </div>
 
-            {/* Ledger Transactions Table */}
-            <div className="flex-1 overflow-y-auto px-4 sm:px-5 pb-5">
-              <div className="bg-slate-950/80 rounded-2xl border border-slate-800 overflow-hidden shadow-xl">
-                <div className="p-3.5 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
+            {/* Tab Switcher: Ledger vs Purchase History */}
+            <div className="px-4 sm:px-5 pt-3 pb-1 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setCustomerViewTab('ledger')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                  customerViewTab === 'ledger'
+                    ? 'bg-amber-500 text-slate-950 shadow-md'
+                    : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+                }`}
+              >
+                <History className="w-3.5 h-3.5" />
+                <span>Ledger Khata ({activeLedger.length})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setCustomerViewTab('purchases')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                  customerViewTab === 'purchases'
+                    ? 'bg-amber-500 text-slate-950 shadow-md'
+                    : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+                }`}
+              >
+                <ShoppingBag className="w-3.5 h-3.5" />
+                <span>Purchase History ({activeCustomerPurchases.length})</span>
+              </button>
+            </div>
+
+            {customerViewTab === 'purchases' ? (
+              <div className="flex-1 overflow-y-auto px-4 sm:px-5 pb-5 pt-2">
+                <div className="bg-slate-950/80 rounded-2xl border border-slate-800 overflow-hidden shadow-xl">
+                  <div className="p-3.5 border-b border-slate-800 flex items-center justify-between">
                     <h4 className="text-xs font-bold text-white flex items-center gap-1.5 uppercase tracking-wider">
-                      <History className="w-4 h-4 text-amber-400" />
-                      Transaction Khata History (Debit & Credit)
+                      <ShoppingBag className="w-4 h-4 text-amber-400" />
+                      Customer Purchase Invoices & Orders
                     </h4>
-                    <span className="text-[11px] text-slate-400">
-                      ({activeLedger.length} entries)
-                    </span>
+                    <span className="text-[11px] text-slate-400">({activeCustomerPurchases.length} total orders)</span>
                   </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-slate-900/90 text-slate-400 border-b border-slate-800 uppercase font-semibold">
+                          <th className="p-3">Invoice No</th>
+                          <th className="p-3">Date & Time</th>
+                          <th className="p-3">Items Purchased</th>
+                          <th className="p-3 text-center">Payment</th>
+                          <th className="p-3 text-right">Net Total (Rs)</th>
+                          <th className="p-3 text-right">Cashier</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/60">
+                        {activeCustomerPurchases.length === 0 ? (
+                          <tr>
+                            <td colSpan={6} className="p-6 text-center text-slate-500">
+                              No past purchase invoices recorded for this customer.
+                            </td>
+                          </tr>
+                        ) : (
+                          activeCustomerPurchases.map((inv) => (
+                            <tr key={inv.id} className="hover:bg-slate-900/60 transition">
+                              <td className="p-3 font-mono font-bold text-amber-400">{inv.invoiceNo}</td>
+                              <td className="p-3 text-slate-300">{inv.date}</td>
+                              <td className="p-3">
+                                <span className="font-semibold text-white">{inv.items?.length || 0} items</span>
+                                <span className="text-slate-500 block text-[11px] truncate max-w-[220px]">
+                                  {inv.items?.map((it) => `${it.quantity}x ${it.product?.name}`).join(', ')}
+                                </span>
+                              </td>
+                              <td className="p-3 text-center">
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase bg-slate-800 text-amber-300 border border-slate-700">
+                                  {inv.paymentMethod}
+                                </span>
+                              </td>
+                              <td className="p-3 text-right font-black text-white">Rs {(inv.netTotal || 0).toLocaleString()}</td>
+                              <td className="p-3 text-right text-slate-400 text-[11px]">{inv.cashierName || 'Staff'}</td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="flex-1 overflow-y-auto px-4 sm:px-5 pb-5">
+                <div className="bg-slate-950/80 rounded-2xl border border-slate-800 overflow-hidden shadow-xl">
+                  <div className="p-3.5 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <h4 className="text-xs font-bold text-white flex items-center gap-1.5 uppercase tracking-wider">
+                        <History className="w-4 h-4 text-amber-400" />
+                        Transaction Khata History (Debit & Credit)
+                      </h4>
+                      <span className="text-[11px] text-slate-400">
+                        ({activeLedger.length} entries)
+                      </span>
+                    </div>
 
                   {selectedLedgerIds.length > 0 && (
                     <div className="flex items-center gap-2">
@@ -985,6 +1083,7 @@ const CustomerKhataModuleComponent: React.FC<CustomerKhataModuleProps> = ({
                 />
               </div>
             </div>
+            )}
           </>
         ) : (
           <div className="h-full flex items-center justify-center p-8 text-center text-slate-500">

@@ -112,7 +112,15 @@ export const LoginModal: React.FC<LoginModalProps> = ({
       if (onClose) onClose();
     } catch (err: any) {
       console.error('Google Sign-in Error:', err);
-      setErrorMsg(err?.message || 'Google sign-in was cancelled or encountered an error.');
+      if (err?.code === 'auth/argument-error' || String(err?.message).includes('auth/argument-error')) {
+        setErrorMsg('Google Sign-In configuration mismatch. Please use Staff Quick PIN (Default Admin: 1234, Staff: 0000).');
+      } else if (err?.code === 'auth/popup-closed-by-user') {
+        setErrorMsg('Google Sign-in popup was closed before completing login.');
+      } else if (err?.code === 'auth/popup-blocked') {
+        setErrorMsg('Google Sign-in popup was blocked by your browser. Please allow popups for this site.');
+      } else {
+        setErrorMsg(err?.message || 'Google sign-in was cancelled or encountered an error.');
+      }
     } finally {
       setIsLoadingGoogle(false);
     }

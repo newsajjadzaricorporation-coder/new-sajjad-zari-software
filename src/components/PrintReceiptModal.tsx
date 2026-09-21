@@ -23,10 +23,25 @@ import {
   CreditCard,
   RefreshCw,
   AlertTriangle,
+  ListFilter,
+  Trash2,
+  Clock,
 } from 'lucide-react';
 import { SaleInvoice, ShopSettings } from '../types';
 import { generateBarcodeSvg } from '../utils/barcode';
 import { ESCPOSPrinter } from '../utils/escpos';
+import { OfflineDB } from '../services/db';
+import { ReceiptCanvas } from './ReceiptCanvas';
+
+export interface PrintQueueJob {
+  id: string;
+  invoiceNo: string;
+  customerName: string;
+  netTotal: number;
+  layout: 'thermal80' | 'thermal58' | 'a4';
+  status: 'pending' | 'printing' | 'completed' | 'failed';
+  timestamp: string;
+}
 
 const renderPaymentMethodIcon = (method: string, sizeClass = 'w-4 h-4') => {
   const m = (method || '').toLowerCase();
@@ -53,11 +68,15 @@ export const PrintReceiptModal: React.FC<PrintReceiptModalProps> = ({
   isOpen,
   onClose,
   sale,
-  settings,
+  settings: initialSettings,
 }) => {
+  const [activeSettings, setActiveSettings] = useState<ShopSettings>(() => {
+    return OfflineDB.getSettings() || initialSettings;
+  });
   const [printLayout, setPrintLayout] = useState<'thermal80' | 'thermal58' | 'a4'>('a4');
   const [isPreviewMode, setIsPreviewMode] = useState(true);
   const [isBlackAndWhite, setIsBlackAndWhite] = useState(false);
+  const [showLogo, setShowLogo] = useState<boolean>(true);
   const [zoomScale, setZoomScale] = useState<number>(0.95);
   const [showUrduDetails, setShowUrduDetails] = useState(true);
   const [showBarcode, setShowBarcode] = useState(true);
@@ -66,6 +85,65 @@ export const PrintReceiptModal: React.FC<PrintReceiptModalProps> = ({
   const [printJobFailed, setPrintJobFailed] = useState(false);
   const [retryCountdown, setRetryCountdown] = useState<number>(0);
   const [printAttemptCount, setPrintAttemptCount] = useState<number>(0);
+
+  // Sync settings when modal opens or initialSettings change
+  useEffect(() => {
+    if (isOpen) {
+      const freshSettings = OfflineDB.getSettings() || initialSettings;
+      setActiveSettings(freshSettings);
+      setShowLogo(freshSettings.printBusinessLogo ?? true);
+    }
+  }, [isOpen, initialSettings]);
+
+  // Printer Queue Management State
+  const [printQueue, setPrintQueue] = useState<PrintQueueJob[]>(() => {
+    return OfflineDB.getPrintQueue() || [];
+  });
+  const [showQueueDrawer, setShowQueueDrawer] = useState<boolean>(false);
+
+  // Sync current sale into Print Queue
+  useEffect(() => {
+    if (!sale) return;
+    setPrintQueue((prev) => {
+      const exists = prev.some((j) => j.invoiceNo === sale.invoiceNo);
+      if (!exists) {
+        const newJob: PrintQueueJob = {
+          id: `job-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          invoiceNo: sale.invoiceNo,
+          customerName: sale.customerName || 'Walk-in Customer',
+          netTotal: sale.netTotal,
+          layout: printLayout,
+          status: 'pending',
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        };
+        const updated = [newJob, ...prev];
+        OfflineDB.savePrintQueue(updated);
+        return updated;
+      }
+      return prev;
+    });
+  }, [sale, printLayout]);
+
+  const updateJobStatus = useCallback((invoiceNo: string, status: 'pending' | 'printing' | 'completed' | 'failed') => {
+    setPrintQueue((prev) => {
+      const updated = prev.map((j) => (j.invoiceNo === invoiceNo ? { ...j, status } : j));
+      OfflineDB.savePrintQueue(updated);
+      return updated;
+    });
+  }, []);
+
+  const handleClearQueue = () => {
+    setPrintQueue([]);
+    OfflineDB.savePrintQueue([]);
+  };
+
+  const handleRemoveQueueJob = (jobId: string) => {
+    setPrintQueue((prev) => {
+      const updated = prev.filter((j) => j.id !== jobId);
+      OfflineDB.savePrintQueue(updated);
+      return updated;
+    });
+  };
 
   // Countdown timer for Quick Retry cooldown
   useEffect(() => {
@@ -104,16 +182,19 @@ export const PrintReceiptModal: React.FC<PrintReceiptModalProps> = ({
   const handleBrowserPrint = () => {
     setIsPrintingAnim(true);
     setPrintAttemptCount((prev) => prev + 1);
+    if (sale) updateJobStatus(sale.invoiceNo, 'printing');
 
     try {
       setTimeout(() => {
         window.print();
         setIsPrintingAnim(false);
+        if (sale) updateJobStatus(sale.invoiceNo, 'completed');
       }, 250);
     } catch (err) {
       console.error('Window print error:', err);
       setPrintJobFailed(true);
       setIsPrintingAnim(false);
+      if (sale) updateJobStatus(sale.invoiceNo, 'failed');
     }
   };
 
@@ -184,6 +265,21 @@ export const PrintReceiptModal: React.FC<PrintReceiptModalProps> = ({
             </div>
 
             <div className="flex items-center gap-2 flex-wrap">
+              {/* Print Preview Mode Toggle */}
+              <button
+                type="button"
+                onClick={() => setIsPreviewMode(!isPreviewMode)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-bold border transition cursor-pointer text-xs ${
+                  isPreviewMode
+                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 shadow-sm'
+                    : 'bg-slate-800 text-slate-300 border-slate-700'
+                }`}
+                title="Toggle live print-preview layout mode"
+              >
+                <Eye className="w-3.5 h-3.5 text-amber-400" />
+                <span>Print Preview: {isPreviewMode ? 'ON' : 'OFF'}</span>
+              </button>
+
               {/* Layout Switcher */}
               <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
                 <button
@@ -191,6 +287,7 @@ export const PrintReceiptModal: React.FC<PrintReceiptModalProps> = ({
                   onClick={() => {
                     setPrintLayout('a4');
                     setZoomScale(0.95);
+                    setIsPreviewMode(true);
                   }}
                   className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer flex items-center gap-1.5 ${
                     printLayout === 'a4'
@@ -199,13 +296,14 @@ export const PrintReceiptModal: React.FC<PrintReceiptModalProps> = ({
                   }`}
                 >
                   <FileText className="w-3.5 h-3.5" />
-                  <span>A4 Laser Sheet</span>
+                  <span>A4 Sheet</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => {
                     setPrintLayout('thermal80');
                     setZoomScale(1.0);
+                    setIsPreviewMode(true);
                   }}
                   className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer ${
                     printLayout === 'thermal80'
@@ -220,6 +318,7 @@ export const PrintReceiptModal: React.FC<PrintReceiptModalProps> = ({
                   onClick={() => {
                     setPrintLayout('thermal58');
                     setZoomScale(1.0);
+                    setIsPreviewMode(true);
                   }}
                   className={`px-3 py-1.5 rounded-lg font-bold transition cursor-pointer ${
                     printLayout === 'thermal58'
@@ -230,6 +329,26 @@ export const PrintReceiptModal: React.FC<PrintReceiptModalProps> = ({
                   58mm Mini
                 </button>
               </div>
+
+              {/* Print Queue Manager Drawer Toggle Button */}
+              <button
+                type="button"
+                onClick={() => setShowQueueDrawer(!showQueueDrawer)}
+                className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold transition cursor-pointer ${
+                  showQueueDrawer
+                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                    : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
+                }`}
+                title="View Printer Queue & History"
+              >
+                <ListFilter className="w-3.5 h-3.5 text-amber-400" />
+                <span>Print Queue</span>
+                {printQueue.length > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-amber-500 text-slate-950 font-black">
+                    {printQueue.length}
+                  </span>
+                )}
+              </button>
 
               <button
                 type="button"
@@ -244,7 +363,7 @@ export const PrintReceiptModal: React.FC<PrintReceiptModalProps> = ({
 
           {/* SECONDARY PRINT PREVIEW CONTROLS TOOLBAR */}
           <div className="flex flex-wrap items-center justify-between px-5 py-2.5 bg-slate-900 border-b border-slate-800 text-xs gap-3 shrink-0">
-            {/* Left: Mode Toggles (B&W vs Color, Urdu, Barcode) */}
+            {/* Left: Mode Toggles (B&W vs Color, Urdu, Barcode, Logo) */}
             <div className="flex items-center gap-2 flex-wrap">
               {/* Black and White Mode Toggle */}
               <button
@@ -259,6 +378,21 @@ export const PrintReceiptModal: React.FC<PrintReceiptModalProps> = ({
               >
                 <Palette className={`w-3.5 h-3.5 ${isBlackAndWhite ? 'text-slate-950' : 'text-amber-400'}`} />
                 <span>{isBlackAndWhite ? 'Black & White (Active)' : 'Color Mode'}</span>
+              </button>
+
+              {/* Logo Toggle */}
+              <button
+                type="button"
+                onClick={() => setShowLogo(!showLogo)}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl font-semibold border transition cursor-pointer ${
+                  showLogo
+                    ? 'bg-slate-800 text-amber-300 border-slate-700 shadow-sm'
+                    : 'bg-slate-950 text-slate-500 border-slate-800'
+                }`}
+                title="Toggle business logo / header branding on receipt"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Logo {showLogo ? 'Visible' : 'Hidden'}</span>
               </button>
 
               {/* Show/Hide Urdu Toggle */}
@@ -328,6 +462,51 @@ export const PrintReceiptModal: React.FC<PrintReceiptModalProps> = ({
 
           {/* SCROLLABLE INVOICE / RECEIPT CANVAS STAGE */}
           <div className="flex-1 overflow-auto p-4 sm:p-8 bg-slate-950/60 flex justify-center items-start custom-scrollbar">
+            {!isPreviewMode ? (
+              <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center space-y-4 my-auto">
+                <div className="w-16 h-16 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-400 flex items-center justify-center mx-auto">
+                  <Printer className="w-8 h-8" />
+                </div>
+                <div>
+                  <h4 className="text-lg font-bold text-white">Print Preview is Currently OFF</h4>
+                  <p className="text-xs text-slate-400 mt-1">
+                    You have chosen to send invoice #{sale.invoiceNo} directly to the printer ({printLayout.toUpperCase()}) without visual inspection.
+                  </p>
+                </div>
+                <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 text-left text-xs space-y-1.5 text-slate-300">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Customer:</span>
+                    <span className="font-bold text-white">{sale.customerName}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Total Items:</span>
+                    <span className="font-bold text-white">{sale.items.length} items</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Net Payable:</span>
+                    <span className="font-bold text-amber-400">Rs {sale.netTotal.toLocaleString()}</span>
+                  </div>
+                </div>
+                <div className="flex gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsPreviewMode(true)}
+                    className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-bold transition cursor-pointer flex items-center justify-center gap-1.5"
+                  >
+                    <Eye className="w-4 h-4 text-amber-400" />
+                    <span>Enable Print Preview</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleBrowserPrint}
+                    className="flex-1 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-xl text-xs font-black transition cursor-pointer flex items-center justify-center gap-1.5 shadow-lg shadow-amber-500/20"
+                  >
+                    <Printer className="w-4 h-4" />
+                    <span>Print Now</span>
+                  </button>
+                </div>
+              </div>
+            ) : (
             <div
               style={{
                 transform: `scale(${zoomScale})`,
@@ -355,25 +534,33 @@ export const PrintReceiptModal: React.FC<PrintReceiptModalProps> = ({
                     {/* Header */}
                     <div className="flex justify-between items-start border-b-2 border-slate-900 pb-4">
                       <div className="flex items-start gap-4">
-                        {settings.logoUrl && (
-                          <div className="w-16 h-16 rounded-lg border border-slate-300 bg-white p-1 flex items-center justify-center shrink-0">
-                            <img src={settings.logoUrl} alt="Logo" className="w-full h-full object-contain" />
-                          </div>
+                        {showLogo && (
+                          activeSettings.logoUrl ? (
+                            <div className="w-16 h-16 rounded-lg border border-slate-300 bg-white p-1 flex items-center justify-center shrink-0 overflow-hidden">
+                              <img src={activeSettings.logoUrl} alt="Logo" className="w-full h-full object-contain" />
+                            </div>
+                          ) : (
+                            <div className="w-16 h-16 rounded-lg border-2 border-slate-900 bg-amber-500/10 p-1 flex flex-col items-center justify-center shrink-0 text-slate-900">
+                              <span className="text-[10px] font-black uppercase tracking-tighter leading-none">NEW</span>
+                              <span className="text-sm font-black tracking-tighter leading-none">SAJJAD</span>
+                              <span className="text-[9px] font-bold tracking-widest text-amber-800 leading-none">ZARI</span>
+                            </div>
+                          )
                         )}
                         <div>
                           <h1 className="text-2xl font-black tracking-tight text-slate-950">
-                            {settings.shopName}
+                            {activeSettings.shopName}
                           </h1>
                           {showUrduDetails && (
                             <p className={`text-xl font-bold font-urdu mt-1 ${isBlackAndWhite ? 'text-black' : 'text-amber-700'}`}>
-                              {settings.urduTitle}
+                              {activeSettings.urduTitle}
                             </p>
                           )}
-                          <p className="text-xs text-slate-600 mt-1">{settings.tagline}</p>
-                          <p className="text-xs text-slate-600">{settings.address}</p>
-                          <p className="text-xs font-semibold text-slate-800 mt-1">Tel: {settings.phone}</p>
-                          {settings.thermalHeaderNote && (
-                            <p className="text-[11px] text-slate-500">{settings.thermalHeaderNote}</p>
+                          <p className="text-xs text-slate-600 mt-1">{activeSettings.tagline}</p>
+                          <p className="text-xs text-slate-600">{activeSettings.address}</p>
+                          <p className="text-xs font-semibold text-slate-800 mt-1">Tel: {activeSettings.phone}</p>
+                          {activeSettings.thermalHeaderNote && (
+                            <p className="text-[11px] text-slate-500">{activeSettings.thermalHeaderNote}</p>
                           )}
                         </div>
                       </div>
@@ -468,7 +655,7 @@ export const PrintReceiptModal: React.FC<PrintReceiptModalProps> = ({
                         </p>
                         {showUrduDetails && (
                           <p className="font-urdu text-xs font-bold text-slate-700">
-                            {settings.thermalFooterUrdu}
+                            {activeSettings.thermalFooterUrdu}
                           </p>
                         )}
                       </div>
@@ -539,9 +726,9 @@ export const PrintReceiptModal: React.FC<PrintReceiptModalProps> = ({
                     </div>
 
                     {/* Custom Receipt Footer Note */}
-                    {settings.customReceiptFooter && (
+                    {activeSettings.customReceiptFooter && (
                       <div className="mt-6 pt-3 border-t border-dashed border-slate-300 text-center text-xs text-slate-600 font-medium">
-                        {settings.customReceiptFooter}
+                        {activeSettings.customReceiptFooter}
                       </div>
                     )}
                   </div>
@@ -550,19 +737,27 @@ export const PrintReceiptModal: React.FC<PrintReceiptModalProps> = ({
                   <div className="font-mono-receipt space-y-3 leading-tight">
                     {/* Header */}
                     <div className="text-center space-y-1 border-b border-dashed border-slate-400 pb-3">
-                      {settings.logoUrl && (
-                        <div className="flex justify-center mb-1">
-                          <img src={settings.logoUrl} alt="Logo" className="max-h-12 max-w-[120px] object-contain mx-auto" />
-                        </div>
+                      {showLogo && (
+                        activeSettings.logoUrl ? (
+                          <div className="flex justify-center mb-1">
+                            <img src={activeSettings.logoUrl} alt="Logo" className="max-h-12 max-w-[140px] object-contain mx-auto" />
+                          </div>
+                        ) : (
+                          <div className="flex justify-center mb-1">
+                            <div className="inline-flex flex-col items-center justify-center border border-black px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider leading-tight">
+                              <span>★ {activeSettings.shopName || 'NEW SAJJAD ZARI'} ★</span>
+                            </div>
+                          </div>
+                        )
                       )}
-                      <h2 className="text-base font-bold tracking-tight text-slate-950">{settings.shopName}</h2>
+                      <h2 className="text-base font-bold tracking-tight text-slate-950">{activeSettings.shopName}</h2>
                       {showUrduDetails && (
-                        <p className="font-urdu text-sm font-bold text-slate-800">{settings.urduTitle}</p>
+                        <p className="font-urdu text-sm font-bold text-slate-800">{activeSettings.urduTitle}</p>
                       )}
-                      <p className="text-[11px] text-slate-600">{settings.address}</p>
-                      <p className="text-[11px] font-semibold text-slate-800">Phone: {settings.phone}</p>
-                      {settings.thermalHeaderNote && (
-                        <p className="text-[10px] text-slate-500 pt-0.5">{settings.thermalHeaderNote}</p>
+                      <p className="text-[11px] text-slate-600">{activeSettings.address}</p>
+                      <p className="text-[11px] font-semibold text-slate-800">Phone: {activeSettings.phone}</p>
+                      {activeSettings.thermalHeaderNote && (
+                        <p className="text-[10px] text-slate-500 pt-0.5">{activeSettings.thermalHeaderNote}</p>
                       )}
                     </div>
 
@@ -680,12 +875,12 @@ export const PrintReceiptModal: React.FC<PrintReceiptModalProps> = ({
                       <p className="text-[10px] text-slate-600">Thank you for your business!</p>
                       {showUrduDetails && (
                         <p className="font-urdu text-xs font-bold text-slate-800">
-                          {settings.thermalFooterUrdu}
+                          {activeSettings.thermalFooterUrdu}
                         </p>
                       )}
-                      {settings.customReceiptFooter && (
+                      {activeSettings.customReceiptFooter && (
                         <p className="text-[10px] text-slate-700 font-medium pt-1 border-t border-slate-300">
-                          {settings.customReceiptFooter}
+                          {activeSettings.customReceiptFooter}
                         </p>
                       )}
                       <p className="text-[9px] text-slate-400">
@@ -694,9 +889,10 @@ export const PrintReceiptModal: React.FC<PrintReceiptModalProps> = ({
                     </div>
                   </div>
                 )}
+               </div>
               </div>
-            </div>
-          </div>
+            )}
+           </div>
 
           {/* PRINT JOB STATUS & FAILURE ALERT BANNER */}
           {(printJobFailed || printAttemptCount > 0) && (
@@ -820,6 +1016,129 @@ export const PrintReceiptModal: React.FC<PrintReceiptModalProps> = ({
               </button>
             </div>
           </div>
+
+          {/* PRINTER QUEUE & HISTORY SLIDE-OVER DRAWER */}
+          <AnimatePresence>
+            {showQueueDrawer && (
+              <motion.div
+                initial={{ opacity: 0, x: 300 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 300 }}
+                transition={{ type: 'spring', damping: 25, stiffness: 280 }}
+                className="absolute inset-y-0 right-0 w-full sm:w-96 bg-slate-950/95 border-l border-slate-800 shadow-2xl backdrop-blur-xl z-20 flex flex-col"
+              >
+                {/* Drawer Header */}
+                <div className="p-4 border-b border-slate-800 flex items-center justify-between bg-slate-900/80">
+                  <div className="flex items-center gap-2">
+                    <ListFilter className="w-4 h-4 text-amber-400" />
+                    <h4 className="text-sm font-bold text-white">Printer Queue & History</h4>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {printQueue.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleClearQueue}
+                        className="text-[11px] font-semibold text-slate-400 hover:text-red-400 transition cursor-pointer"
+                        title="Clear all job history"
+                      >
+                        Clear History
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setShowQueueDrawer(false)}
+                      className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition cursor-pointer"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Queue List */}
+                <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                  {printQueue.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center text-center p-6 text-slate-500">
+                      <Clock className="w-10 h-10 mb-2 opacity-50" />
+                      <p className="text-xs font-semibold">No print jobs in history</p>
+                      <p className="text-[11px] mt-1 text-slate-600">
+                        Print requests for receipts will automatically log here for status tracking and instant retries.
+                      </p>
+                    </div>
+                  ) : (
+                    printQueue.map((job) => (
+                      <div
+                        key={job.id}
+                        className="p-3 bg-slate-900 border border-slate-800 rounded-xl space-y-2 relative group"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-xs font-bold text-amber-300">#{job.invoiceNo}</span>
+                              <span className="text-[10px] text-slate-400">{job.timestamp}</span>
+                            </div>
+                            <span className="text-xs text-slate-300 block font-medium truncate max-w-[180px]">
+                              {job.customerName}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveQueueJob(job.id)}
+                            className="p-1 text-slate-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition cursor-pointer"
+                            title="Remove job"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+
+                        <div className="flex items-center justify-between text-[11px] pt-1 border-t border-slate-800/80">
+                          <span className="text-slate-400 font-mono">
+                            Rs {job.netTotal.toLocaleString()} ({job.layout.toUpperCase()})
+                          </span>
+
+                          <div className="flex items-center gap-2">
+                            {/* Status Badge */}
+                            {job.status === 'completed' && (
+                              <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-[10px] font-bold flex items-center gap-1">
+                                <Check className="w-3 h-3" /> Printed
+                              </span>
+                            )}
+                            {job.status === 'printing' && (
+                              <span className="px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/30 text-[10px] font-bold flex items-center gap-1 animate-pulse">
+                                <RefreshCw className="w-3 h-3 animate-spin" /> Printing...
+                              </span>
+                            )}
+                            {job.status === 'pending' && (
+                              <span className="px-2 py-0.5 rounded-md bg-slate-800 text-slate-400 border border-slate-700 text-[10px] font-bold">
+                                Pending
+                              </span>
+                            )}
+                            {job.status === 'failed' && (
+                              <span className="px-2 py-0.5 rounded-md bg-red-500/10 text-red-400 border border-red-500/30 text-[10px] font-bold flex items-center gap-1">
+                                <AlertTriangle className="w-3 h-3" /> Failed
+                              </span>
+                            )}
+
+                            {/* Retry Action */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                handleQuickRetry();
+                                updateJobStatus(job.invoiceNo, 'printing');
+                              }}
+                              className="px-2 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-lg text-[10px] font-bold transition flex items-center gap-1 cursor-pointer"
+                              title="Resend print command to printer"
+                            >
+                              <RotateCcw className="w-3 h-3" /> Retry
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </motion.div>
       </div>
     </AnimatePresence>

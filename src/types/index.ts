@@ -71,6 +71,7 @@ export interface SaleInvoice {
   newBalance?: number;
   status: 'completed' | 'returned' | 'partial_return';
   notes?: string;
+  reprintCount?: number;
 }
 
 export type LoyaltyTier = 'Bronze' | 'Silver' | 'Gold' | 'Platinum';
@@ -271,6 +272,7 @@ export interface ShopSettings {
   phone: string;
   address: string;
   logoUrl?: string;
+  printBusinessLogo?: boolean;
   thermalHeaderNote: string;
   thermalFooterUrdu: string;
   customReceiptFooter?: string;
@@ -290,6 +292,26 @@ export interface ShopSettings {
   pointRedemptionRate?: number; // e.g. 1 point = 1 Rs
   minPointsToRedeem?: number; // minimum points needed to redeem (e.g. 50)
   backupRetentionDays?: 14 | 30 | 60 | 90;
+}
+
+export interface CartDraft {
+  id: string;
+  savedAt: string;
+  timestamp: number;
+  cart: CartItem[];
+  selectedCustomerId?: string;
+  customerName?: string;
+  customerPhone?: string;
+  discountType: 'flat' | 'percentage';
+  discountValue: number;
+  isServiceFeeEnabled?: boolean;
+  serviceFeeType?: 'flat' | 'percentage';
+  serviceFeeValue?: number;
+  paymentMethod?: PaymentMethod;
+  amountTendered?: string;
+  notes?: string;
+  itemCount: number;
+  grossSubtotal: number;
 }
 
 export interface CSVValidationItem {

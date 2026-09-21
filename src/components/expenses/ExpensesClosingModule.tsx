@@ -13,10 +13,12 @@ import {
   DollarSign,
   FileSpreadsheet,
   Trash2,
+  Download,
 } from 'lucide-react';
 import { ExpenseItem, DailyClosingReport, UserProfile, ShopSettings, SaleInvoice } from '../../types';
 import { OfflineDB } from '../../services/db';
 import { ESCPOSPrinter } from '../../utils/escpos';
+import { generateDailyClosingReportPDF } from '../../utils/pdfReport';
 import { PaginationControls } from '../common/PaginationControls';
 import { DayEndSummaryModal } from './DayEndSummaryModal';
 
@@ -163,12 +165,117 @@ const ExpensesClosingModuleComponent: React.FC<ExpensesClosingModuleProps> = ({
 
     OfflineDB.saveDailyClosing(report);
     setClosings(OfflineDB.getClosingReports());
-    alert('Daily Cash Register Closed successfully! Z-Report is ready for thermal printing.');
+    setSelectedSummaryDate(todayStr);
+    setIsDayEndModalOpen(true);
   };
 
   const handlePrintZReport = (report: DailyClosingReport) => {
-    const text = ESCPOSPrinter.formatZReportText(report, settings);
-    window.print();
+    setSelectedSummaryDate(report.date || todayStr);
+    setIsDayEndModalOpen(true);
+  };
+
+  const handleDirectExportPDF = (reportOrDate?: DailyClosingReport | string) => {
+    const targetDateStr = typeof reportOrDate === 'string'
+      ? reportOrDate
+      : reportOrDate?.date || todayStr;
+    const closingRep = typeof reportOrDate === 'object'
+      ? reportOrDate
+      : closings.find((c) => c.date === targetDateStr) || null;
+
+    const daySales = sales.filter((s) => {
+      const saleDate = new Date(s.timestamp).toISOString().slice(0, 10);
+      return saleDate === targetDateStr && s.status === 'completed';
+    });
+
+    const dayExpenses = expenses.filter((e) => {
+      const expDate = new Date(e.timestamp || e.date).toISOString().slice(0, 10);
+      return expDate === targetDateStr;
+    });
+
+    const dayCustomerPayments = OfflineDB.getCustomerPaymentsToday();
+
+    const totalInvoices = daySales.length;
+    const grossSales = daySales.reduce((acc, s) => acc + (s.subtotal || 0), 0);
+    const totalDiscounts = daySales.reduce((acc, s) => acc + (s.discountAmount || 0), 0);
+    const netSales = daySales.reduce((acc, s) => acc + (s.netTotal || 0), 0);
+    const avgBasketSize = totalInvoices > 0 ? Math.round(netSales / totalInvoices) : 0;
+
+    const cashSales = daySales.filter((s) => s.paymentMethod === 'cash').reduce((acc, s) => acc + s.netTotal, 0);
+    const cardSales = daySales.filter((s) => s.paymentMethod === 'card').reduce((acc, s) => acc + s.netTotal, 0);
+    const creditSales = daySales.filter((s) => s.paymentMethod === 'credit').reduce((acc, s) => acc + s.netTotal, 0);
+
+    const udhaarCashWasooli = dayCustomerPayments
+      .filter((p) => p.paymentMethod?.toLowerCase() === 'cash' || !p.paymentMethod)
+      .reduce((acc, p) => acc + (p.credit || 0), 0);
+
+    const udhaarBankWasooli = dayCustomerPayments
+      .filter((p) => p.paymentMethod?.toLowerCase() === 'bank transfer' || p.paymentMethod?.toLowerCase() === 'card')
+      .reduce((acc, p) => acc + (p.credit || 0), 0);
+
+    const cashExpenses = dayExpenses.filter((e) => e.paymentMethod === 'cash').reduce((acc, e) => acc + e.amount, 0);
+    const bankExpenses = dayExpenses.filter((e) => e.paymentMethod === 'bank').reduce((acc, e) => acc + e.amount, 0);
+    const totalExp = cashExpenses + bankExpenses;
+
+    const map = new Map<string, number>();
+    dayExpenses.forEach((e) => {
+      const curr = map.get(e.category) || 0;
+      map.set(e.category, curr + e.amount);
+    });
+    const expensesByCategory = Array.from(map.entries()).map(([category, amount]) => ({ category, amount }));
+
+    const totalCOGS = daySales.reduce((acc, s) => {
+      const saleCost = s.items.reduce((sum, item) => sum + (item.product.costPrice || 0) * item.quantity, 0);
+      return acc + saleCost;
+    }, 0);
+
+    const grossProfit = Math.max(0, netSales - totalCOGS);
+    const grossMarginPercent = netSales > 0 ? Math.round((grossProfit / netSales) * 100) : 0;
+    const netDayProfit = grossProfit - totalExp;
+
+    const openingFloat = closingRep?.openingCash || 15000;
+    const expectedDrawerCash = openingFloat + cashSales + udhaarCashWasooli - cashExpenses;
+
+    const formattedDate = new Date(targetDateStr).toLocaleDateString('en-US', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    });
+
+    generateDailyClosingReportPDF({
+      reportDate: targetDateStr,
+      formattedDateStr: formattedDate,
+      closingReport: closingRep,
+      currentUser,
+      settings,
+      sales: daySales,
+      expenses: dayExpenses,
+      customerPayments: dayCustomerPayments,
+      summary: {
+        totalInvoices,
+        grossSales,
+        totalDiscounts,
+        netSales,
+        avgBasketSize,
+        cashSales,
+        cardSales,
+        creditSales,
+        udhaarCashWasooli,
+        udhaarBankWasooli,
+        totalExpenses: totalExp,
+        cashExpenses,
+        bankExpenses,
+        totalCOGS,
+        grossProfit,
+        grossMarginPercent,
+        netDayProfit,
+        openingFloat,
+        expectedDrawerCash,
+        actualCountedCash: closingRep?.actualCash,
+        discrepancy: closingRep?.discrepancy,
+        expensesByCategory,
+      },
+    });
   };
 
   return (
@@ -212,15 +319,25 @@ const ExpensesClosingModuleComponent: React.FC<ExpensesClosingModuleProps> = ({
 
           <button
             type="button"
+            onClick={() => handleDirectExportPDF(todayStr)}
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-amber-400 border border-amber-500/30 hover:border-amber-400 rounded-xl text-xs font-bold transition shadow-sm cursor-pointer"
+            title="Export today's closing summary report as a formatted PDF for archival"
+          >
+            <Download className="w-4 h-4" />
+            <span>Export PDF (PDF محفوظ کریں)</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => {
               setSelectedSummaryDate(new Date().toISOString().slice(0, 10));
               setIsDayEndModalOpen(true);
             }}
-            className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 rounded-xl text-xs font-bold transition shadow-sm cursor-pointer"
-            title="Open printable Financial Summary Report"
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-xl text-xs font-bold transition shadow-sm cursor-pointer"
+            title="Open printable Z-Closing and Financial Summary Report for Thermal Printers"
           >
             <Printer className="w-4 h-4" />
-            <span>Print Financial Summary</span>
+            <span>Print Z-Closing Report (Z-رپورٹ پرنٹ کریں)</span>
           </button>
         </div>
       </div>
@@ -564,22 +681,45 @@ const ExpensesClosingModuleComponent: React.FC<ExpensesClosingModuleProps> = ({
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={handleCloseRegister}
-                className="px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-xl text-xs shadow-lg transition"
-              >
-                Close Drawer & Generate Z-Report
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleDirectExportPDF(todayStr)}
+                  className="px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-amber-400 border border-amber-500/30 font-bold rounded-xl text-xs shadow transition flex items-center gap-1.5 cursor-pointer"
+                  title="Export Day Closing PDF for Archival"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Export PDF
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedSummaryDate(todayStr);
+                    setIsDayEndModalOpen(true);
+                  }}
+                  className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 font-bold rounded-xl text-xs shadow transition flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  Print Z-Closing Report
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCloseRegister}
+                  className="px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-xl text-xs shadow-lg transition cursor-pointer"
+                >
+                  Close Drawer & Generate Z-Report
+                </button>
+              </div>
             </div>
           </div>
 
           {/* Past Z-Report Closings Table */}
           <div className="bg-slate-950/80 rounded-2xl border border-slate-800 overflow-hidden shadow-xl">
-            <div className="p-4 border-b border-slate-800">
+            <div className="p-4 border-b border-slate-800 flex items-center justify-between">
               <h3 className="text-xs font-bold text-white uppercase tracking-wider">
-                Historic Z-Report Closings
+                Historic Z-Report Closings & Archival
               </h3>
+              <span className="text-[11px] text-slate-400">Export as PDF or print on 80mm/58mm thermal rolls</span>
             </div>
 
             <div className="overflow-x-auto">
@@ -591,7 +731,7 @@ const ExpensesClosingModuleComponent: React.FC<ExpensesClosingModuleProps> = ({
                     <th className="p-3 text-right">Expected (Rs)</th>
                     <th className="p-3 text-right">Actual Counted (Rs)</th>
                     <th className="p-3 text-right">Discrepancy (Rs)</th>
-                    <th className="p-3 text-center">Print</th>
+                    <th className="p-3 text-center">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800">
@@ -626,13 +766,24 @@ const ExpensesClosingModuleComponent: React.FC<ExpensesClosingModuleProps> = ({
                           {c.discrepancy >= 0 ? '+' : ''}Rs {c.discrepancy.toLocaleString()}
                         </td>
                         <td className="p-3 text-center">
-                          <button
-                            onClick={() => handlePrintZReport(c)}
-                            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-400"
-                            title="Print Z-Report on Thermal Printer"
-                          >
-                            <Printer className="w-4 h-4" />
-                          </button>
+                          <div className="flex items-center justify-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleDirectExportPDF(c)}
+                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 transition cursor-pointer"
+                              title="Download Formatted PDF Z-Report"
+                            >
+                              <Download className="w-4 h-4" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handlePrintZReport(c)}
+                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 transition cursor-pointer"
+                              title="Print Z-Report on Thermal Printer / Slip"
+                            >
+                              <Printer className="w-4 h-4" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))

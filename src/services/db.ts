@@ -15,6 +15,7 @@ import {
   UnitType,
   CSVValidationItem,
   CSVValidationSummary,
+  CartDraft,
 } from '../types';
 import {
   INITIAL_PRODUCTS,
@@ -26,6 +27,8 @@ import {
   INITIAL_PURCHASES,
 } from '../data/seedData';
 import { getCustomerLoyaltyTier } from '../utils/loyalty';
+import { idbBulkPut, idbBulkDelete, idbSetKeyVal, idbGetKeyVal, packData, unpackData } from './indexedDBStorage';
+import { cartItemPool, saleInvoicePool } from '../utils/objectPool';
 
 const DB_KEYS = {
   PRODUCTS: 'nszc_products_v1',
@@ -48,6 +51,7 @@ const DB_KEYS = {
   DAILY_BACKUPS: 'nszc_daily_backups_v1',
   LAST_BACKUP_DATE: 'nszc_last_daily_backup_date_v1',
   PENDING_SYNC_QUEUE: 'nszc_pending_sync_queue_v1',
+  CART_DRAFTS: 'nszc_pos_cart_drafts_v1',
 };
 
 // Broadcast channel for multi-tab synchronization
@@ -65,23 +69,117 @@ function broadcastUpdate(type: string, payload?: unknown) {
   }
 }
 
+// High-performance LRU Cache for global inventory lookups
+export class LRUCache<K, V> {
+  private capacity: number;
+  private cache: Map<K, V>;
+
+  constructor(capacity: number = 500) {
+    this.capacity = capacity;
+    this.cache = new Map<K, V>();
+  }
+
+  get(key: K): V | undefined {
+    if (!this.cache.has(key)) return undefined;
+    const value = this.cache.get(key)!;
+    this.cache.delete(key);
+    this.cache.set(key, value);
+    return value;
+  }
+
+  set(key: K, value: V): void {
+    if (this.cache.has(key)) {
+      this.cache.delete(key);
+    } else if (this.cache.size >= this.capacity) {
+      const oldestKey = this.cache.keys().next().value;
+      if (oldestKey !== undefined) {
+        this.cache.delete(oldestKey);
+      }
+    }
+    this.cache.set(key, value);
+  }
+
+  clear(): void {
+    this.cache.clear();
+  }
+
+  size(): number {
+    return this.cache.size;
+  }
+}
+
+// Global LRU Cache Instance for Inventory Lookups (capacity: 1000 items)
+export const globalInventoryLRUCache = new LRUCache<string, Product>(1000);
+
 // High-performance in-memory cache layer to eliminate repetitive JSON serialization overhead
 const memoryCache = new Map<string, any>();
 
-// In-Memory Index Maps for O(1) Lookups
+// In-Memory Index Maps for O(1) Lookups & Composite Search Paths
 const productIndexById = new Map<string, Product>();
 const productIndexBySku = new Map<string, Product>();
 const productIndexByBarcode = new Map<string, Product>();
+
+// Composite Indexes for O(1) Search Paths
+// 1. [productCode + category]
+const productIndexByCodeCategory = new Map<string, Product>();
+// 2. [transactionDate + status]
+const salesIndexByDateStatus = new Map<string, SaleInvoice[]>();
+// 3. [customerId + date]
+const salesIndexByCustomer = new Map<string, SaleInvoice[]>();
 
 function rebuildProductIndices(products: Product[]) {
   productIndexById.clear();
   productIndexBySku.clear();
   productIndexByBarcode.clear();
+  productIndexByCodeCategory.clear();
+  globalInventoryLRUCache.clear();
+
   for (let i = 0; i < products.length; i++) {
     const p = products[i];
     productIndexById.set(p.id, p);
-    if (p.sku) productIndexBySku.set(p.sku.toLowerCase(), p);
-    if (p.barcode) productIndexByBarcode.set(p.barcode, p);
+
+    const skuLower = p.sku ? p.sku.trim().toLowerCase() : '';
+    const barcodeTrim = p.barcode ? p.barcode.trim() : '';
+    const catLower = (p.category || 'uncategorized').trim().toLowerCase();
+
+    if (skuLower) productIndexBySku.set(skuLower, p);
+    if (barcodeTrim) productIndexByBarcode.set(barcodeTrim, p);
+
+    // Populate composite index [productCode + category]
+    if (skuLower) productIndexByCodeCategory.set(`${skuLower}:${catLower}`, p);
+    if (barcodeTrim) productIndexByCodeCategory.set(`${barcodeTrim}:${catLower}`, p);
+    productIndexByCodeCategory.set(`${p.id}:${catLower}`, p);
+  }
+}
+
+function rebuildSalesIndices(sales: SaleInvoice[]) {
+  salesIndexByDateStatus.clear();
+  salesIndexByCustomer.clear();
+
+  for (let i = 0; i < sales.length; i++) {
+    const s = sales[i];
+    // Form date string (e.g., YYYY-MM-DD or date substring)
+    const datePart = s.date ? s.date.split(' ')[0] : 'nodate';
+    const statusPart = (s.status || 'completed').toLowerCase();
+    
+    // Composite index [transactionDate + status]
+    const dateStatusKey = `${datePart}:${statusPart}`;
+    let dateStatusList = salesIndexByDateStatus.get(dateStatusKey);
+    if (!dateStatusList) {
+      dateStatusList = [];
+      salesIndexByDateStatus.set(dateStatusKey, dateStatusList);
+    }
+    dateStatusList.push(s);
+
+    // Composite index [customerId]
+    if (s.customerId) {
+      let customerSalesList = salesIndexByCustomer.get(s.customerId);
+      if (!customerSalesList) {
+        customerSalesList = [];
+        salesIndexByCustomer.set(s.customerId, customerSalesList);
+      }
+      customerSalesList.push(s);
+    }
   }
 }
 
@@ -92,6 +190,9 @@ if (typeof window !== 'undefined') {
       if (e.key === DB_KEYS.PRODUCTS) {
         const prods = getLocalItem<Product[]>(DB_KEYS.PRODUCTS, INITIAL_PRODUCTS);
         rebuildProductIndices(prods);
+      } else if (e.key === DB_KEYS.SALES) {
+        const salesList = getLocalItem<SaleInvoice[]>(DB_KEYS.SALES, []);
+        rebuildSalesIndices(salesList);
       }
     } else {
       memoryCache.clear();
@@ -124,6 +225,8 @@ function setLocalItem<T>(key: string, value: T): void {
   memoryCache.set(key, value);
   try {
     localStorage.setItem(key, JSON.stringify(value));
+    // Asynchronous background MessagePack binary persistence to IndexedDB
+    idbSetKeyVal(key, value).catch(() => {});
   } catch (err) {
     console.error(`Error saving key ${key} to storage:`, err);
   }
@@ -254,21 +357,59 @@ export class OfflineDB {
     if (productIndexById.size === 0) {
       this.getProducts();
     }
-    return productIndexById.get(id);
+    const cached = globalInventoryLRUCache.get(`id:${id}`);
+    if (cached) return cached;
+
+    const found = productIndexById.get(id);
+    if (found) globalInventoryLRUCache.set(`id:${id}`, found);
+    return found;
   }
 
   static getProductBySku(sku: string): Product | undefined {
     if (productIndexBySku.size === 0) {
       this.getProducts();
     }
-    return productIndexBySku.get(sku.trim().toLowerCase());
+    const cleanSku = sku.trim().toLowerCase();
+    const cached = globalInventoryLRUCache.get(`sku:${cleanSku}`);
+    if (cached) return cached;
+
+    const found = productIndexBySku.get(cleanSku);
+    if (found) globalInventoryLRUCache.set(`sku:${cleanSku}`, found);
+    return found;
   }
 
   static getProductByBarcode(barcode: string): Product | undefined {
     if (productIndexByBarcode.size === 0) {
       this.getProducts();
     }
-    return productIndexByBarcode.get(barcode.trim());
+    const cleanBarcode = barcode.trim();
+    const cached = globalInventoryLRUCache.get(`barcode:${cleanBarcode}`);
+    if (cached) return cached;
+
+    const found = productIndexByBarcode.get(cleanBarcode);
+    if (found) globalInventoryLRUCache.set(`barcode:${cleanBarcode}`, found);
+    return found;
+  }
+
+  // O(1) Composite lookup for [productCode + category] using LRU cache + Composite Map Index
+  static getProductByCodeAndCategory(code: string, category: string): Product | undefined {
+    const codeClean = code.trim().toLowerCase();
+    const catClean = (category || 'uncategorized').trim().toLowerCase();
+    const compositeKey = `${codeClean}:${catClean}`;
+
+    // 1. Check LRU Cache
+    const cached = globalInventoryLRUCache.get(`composite:${compositeKey}`);
+    if (cached) return cached;
+
+    // 2. Fallback to Composite Index Map
+    if (productIndexByCodeCategory.size === 0) {
+      this.getProducts();
+    }
+    const found = productIndexByCodeCategory.get(compositeKey);
+    if (found) {
+      globalInventoryLRUCache.set(`composite:${compositeKey}`, found);
+    }
+    return found;
   }
 
   static saveProduct(product: Product, userEmail: string): void {
@@ -345,6 +486,9 @@ export class OfflineDB {
     setLocalItem(DB_KEYS.PRODUCTS, filtered);
     rebuildProductIndices(filtered);
 
+    // Fast IndexedDB bulk delete transaction
+    idbBulkDelete('products', productIds).catch(() => {});
+
     if (userEmail && removed.length > 0) {
       this.addAuditLog({
         userEmail,
@@ -355,6 +499,29 @@ export class OfflineDB {
     }
 
     broadcastUpdate('PRODUCTS_UPDATED', filtered);
+  }
+
+  static saveProductsBatch(updatedProducts: Product[], userEmail: string, actionDescription: string): void {
+    if (!updatedProducts || updatedProducts.length === 0) return;
+    const products = this.getProducts();
+    const map = new Map(products.map((p) => [p.id, p]));
+    for (let i = 0; i < updatedProducts.length; i++) {
+      map.set(updatedProducts[i].id, updatedProducts[i]);
+    }
+    const next = Array.from(map.values());
+    setLocalItem(DB_KEYS.PRODUCTS, next);
+    rebuildProductIndices(next);
+
+    // Fast IndexedDB bulk put transaction
+    idbBulkPut('products', updatedProducts).catch(() => {});
+
+    this.addAuditLog({
+      userEmail,
+      actionType: 'PRICE_CHANGE',
+      details: `${actionDescription} across ${updatedProducts.length} product(s)`,
+    });
+
+    broadcastUpdate('PRODUCTS_UPDATED', next);
   }
 
   // Non-blocking asynchronous batch deletion with step progress notifications
@@ -465,13 +632,49 @@ export class OfflineDB {
 
   // SALES & INVOICES
   static getSales(): SaleInvoice[] {
-    return getLocalItem<SaleInvoice[]>(DB_KEYS.SALES, []);
+    const sales = getLocalItem<SaleInvoice[]>(DB_KEYS.SALES, []);
+    if (salesIndexByDateStatus.size === 0 && sales.length > 0) {
+      rebuildSalesIndices(sales);
+    }
+    return sales;
+  }
+
+  // O(1) Composite retrieval for [transactionDate + status]
+  static getSalesByDateAndStatus(date: string, status: 'completed' | 'returned' | 'partial_return' | string): SaleInvoice[] {
+    if (salesIndexByDateStatus.size === 0) {
+      this.getSales();
+    }
+    const datePart = date ? date.split(' ')[0] : 'nodate';
+    const statusPart = (status || 'completed').toLowerCase();
+    const key = `${datePart}:${statusPart}`;
+    return salesIndexByDateStatus.get(key) || [];
+  }
+
+  // O(1) Composite retrieval for customer sales history
+  static getSalesByCustomer(customerId: string): SaleInvoice[] {
+    if (salesIndexByCustomer.size === 0) {
+      this.getSales();
+    }
+    return salesIndexByCustomer.get(customerId) || [];
+  }
+
+  static updateInvoiceReprintCount(invoiceId: string): number {
+    const sales = this.getSales();
+    const sale = sales.find((s) => s.id === invoiceId || s.invoiceNo === invoiceId);
+    if (sale) {
+      sale.reprintCount = (sale.reprintCount || 0) + 1;
+      setLocalItem(DB_KEYS.SALES, sales);
+      rebuildSalesIndices(sales);
+      return sale.reprintCount;
+    }
+    return 0;
   }
 
   static createSale(sale: SaleInvoice): SaleInvoice {
     const sales = this.getSales();
     sales.unshift(sale);
     setLocalItem(DB_KEYS.SALES, sales);
+    rebuildSalesIndices(sales);
 
     // Deduct stock for all items
     const products = this.getProducts();
@@ -2215,5 +2418,65 @@ export class OfflineDB {
   static clearPendingSyncQueue(): void {
     setLocalItem(DB_KEYS.PENDING_SYNC_QUEUE, []);
     broadcastUpdate('PENDING_SYNC_UPDATED', { count: 0 });
+  }
+
+  // PRINT QUEUE MANAGEMENT
+  static getPrintQueue(): any[] {
+    return getLocalItem<any[]>('nszc_print_queue_v1', []);
+  }
+
+  static savePrintQueue(queue: any[]): void {
+    setLocalItem('nszc_print_queue_v1', queue);
+  }
+
+  // PENDING CART DRAFTS MANAGEMENT
+  static getCartDrafts(): CartDraft[] {
+    return getLocalItem<CartDraft[]>(DB_KEYS.CART_DRAFTS, []);
+  }
+
+  static saveCartDraft(draftInput: Omit<CartDraft, 'id' | 'savedAt' | 'timestamp'> & { id?: string }): CartDraft {
+    const drafts = this.getCartDrafts();
+    const id = draftInput.id || `draft-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    
+    const draft: CartDraft = {
+      ...draftInput,
+      id,
+      savedAt: timeStr,
+      timestamp: Date.now(),
+    };
+
+    // Replace if exists, otherwise prepend
+    const existingIdx = drafts.findIndex((d) => d.id === id);
+    if (existingIdx >= 0) {
+      drafts[existingIdx] = draft;
+    } else {
+      drafts.unshift(draft);
+    }
+
+    // Keep max 20 drafts
+    if (drafts.length > 20) drafts.length = 20;
+
+    setLocalItem(DB_KEYS.CART_DRAFTS, drafts);
+    broadcastUpdate('CART_DRAFTS_UPDATED', drafts);
+    return draft;
+  }
+
+  static deleteCartDraft(draftId: string): void {
+    const drafts = this.getCartDrafts();
+    const filtered = drafts.filter((d) => d.id !== draftId);
+    setLocalItem(DB_KEYS.CART_DRAFTS, filtered);
+    broadcastUpdate('CART_DRAFTS_UPDATED', filtered);
+  }
+
+  static getLatestCartDraft(): CartDraft | null {
+    const drafts = this.getCartDrafts();
+    return drafts.length > 0 ? drafts[0] : null;
+  }
+
+  static clearAllCartDrafts(): void {
+    setLocalItem(DB_KEYS.CART_DRAFTS, []);
+    broadcastUpdate('CART_DRAFTS_UPDATED', []);
   }
 }

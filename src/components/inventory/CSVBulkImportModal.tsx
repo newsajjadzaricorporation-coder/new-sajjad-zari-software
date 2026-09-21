@@ -35,7 +35,7 @@ ZAR-BULK-03,Kora Dabka Pearl Embellishment,کورا دبکہ موتی,Fancy Sequ
 ZAR-BULK-04,Velvet Embroidered Neck Border,مخمل کڑھائی گلا بارڈر,Necklines & Motifs,180,290,65,piece,10,Fast color silk thread
 ZAR-BULK-05,Multi-color Silk Resham Thread,ریشم دھاگہ ملٹی,Zari & Tilla Threads,85,140,300,roll,40,High tensile strength`;
 
-export const CSVBulkImportModal: React.FC<CSVBulkImportModalProps> = ({
+export const CSVBulkImportModal: React.FC<CSVBulkImportModalProps> = React.memo(({
   isOpen,
   onClose,
   currentUser,
@@ -658,4 +658,4 @@ export const CSVBulkImportModal: React.FC<CSVBulkImportModalProps> = ({
       </div>
     </div>
   );
-};
+});

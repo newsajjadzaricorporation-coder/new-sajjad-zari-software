@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef, useDeferredValue } from 'react';
 import {
   Search,
   Mic,
@@ -32,6 +32,12 @@ import {
   Star,
   Info,
   Keyboard,
+  Calculator,
+  Clock,
+  History,
+  FolderDown,
+  BookmarkCheck,
+  FileText,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import {
@@ -43,11 +49,15 @@ import {
   ShopSettings,
   Supplier,
   LoyaltyTier,
+  CartDraft,
 } from '../../types';
 import { useSpeechRecognition } from '../../hooks/useSpeechRecognition';
 import { CameraBarcodeScannerModal } from '../CameraBarcodeScannerModal';
 import { ManualSearchModal } from './ManualSearchModal';
+import { POSNumericKeypad } from './POSNumericKeypad';
+import { POSProductCard } from './POSProductCard';
 import { OfflineDB } from '../../services/db';
+import { cartItemPool, saleInvoicePool } from '../../utils/objectPool';
 import {
   fuzzyProductMatch,
   calculatePointsEarned,
@@ -57,6 +67,32 @@ import {
 } from '../../utils/loyalty';
 import { PaginationControls } from '../common/PaginationControls';
 import { SwipeableCartItem } from './SwipeableCartItem';
+
+function highlightPOSMatch(text?: string | null, query?: string): React.ReactNode {
+  if (!text) return null;
+  const trimmed = (query || '').trim();
+  if (!trimmed) return text;
+  const escaped = trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const regex = new RegExp(`(${escaped})`, 'gi');
+  const parts = text.split(regex);
+  if (parts.length <= 1) return text;
+  return (
+    <>
+      {parts.map((part, index) =>
+        regex.test(part) ? (
+          <mark
+            key={index}
+            className="bg-amber-400 text-slate-950 font-black px-1 py-0.5 rounded shadow-sm"
+          >
+            {part}
+          </mark>
+        ) : (
+          part
+        )
+      )}
+    </>
+  );
+}
 
 interface POSModuleProps {
   products: Product[];
@@ -193,6 +229,23 @@ const POSModuleComponent: React.FC<POSModuleProps> = ({
     initialSession.amountTendered || ''
   );
 
+  // Pending Drafts State
+  const [drafts, setDrafts] = useState<CartDraft[]>(() => OfflineDB.getCartDrafts());
+  const [showDraftsModal, setShowDraftsModal] = useState<boolean>(false);
+  const [draftsFeedbackToast, setDraftsFeedbackToast] = useState<string | null>(null);
+  const [activeDraftId, setActiveDraftId] = useState<string | null>(null);
+
+  // Sync Drafts across multi-tab events
+  useEffect(() => {
+    const handleDraftsUpdated = (e: CustomEvent<CartDraft[]>) => {
+      setDrafts(e.detail || OfflineDB.getCartDrafts());
+    };
+    window.addEventListener('CART_DRAFTS_UPDATED' as any, handleDraftsUpdated);
+    return () => {
+      window.removeEventListener('CART_DRAFTS_UPDATED' as any, handleDraftsUpdated);
+    };
+  }, []);
+
   // Loyalty Program Redemption State
   const [isRedeemingPoints, setIsRedeemingPoints] = useState<boolean>(
     initialSession.isRedeemingPoints || false
@@ -200,6 +253,36 @@ const POSModuleComponent: React.FC<POSModuleProps> = ({
   const [pointsToRedeemInput, setPointsToRedeemInput] = useState<string>(
     initialSession.pointsToRedeemInput || ''
   );
+
+  // Numeric Touch Keypad Modal State
+  const [keypadConfig, setKeypadConfig] = useState<{
+    isOpen: boolean;
+    title: string;
+    unitLabel: string;
+    initialValue: string | number;
+    onApply: (val: string) => void;
+  }>({
+    isOpen: false,
+    title: '',
+    unitLabel: 'Rs',
+    initialValue: '',
+    onApply: () => {},
+  });
+
+  const openKeypad = (
+    title: string,
+    initialValue: string | number,
+    unitLabel: string,
+    onApply: (val: string) => void
+  ) => {
+    setKeypadConfig({
+      isOpen: true,
+      title,
+      unitLabel,
+      initialValue,
+      onApply,
+    });
+  };
 
   // Automatically persist ongoing transaction to sessionStorage and cart to localStorage
   useEffect(() => {
@@ -316,6 +399,8 @@ const POSModuleComponent: React.FC<POSModuleProps> = ({
     setPointsToRedeemInput('');
   }, [selectedCustomerId]);
 
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+
   // Advanced Filtered & Sorted Products (Fuzzy Search + Categories + Stock Status + Supplier + Sort)
   const filteredProducts = useMemo(() => {
     let result = products.filter((p) => {
@@ -341,8 +426,8 @@ const POSModuleComponent: React.FC<POSModuleProps> = ({
       }
 
       // 4. Fuzzy & Partial Match Search
-      if (searchQuery.trim()) {
-        const matches = fuzzyProductMatch(searchQuery, p);
+      if (deferredSearchQuery.trim()) {
+        const matches = fuzzyProductMatch(deferredSearchQuery, p);
         if (!matches) return false;
       }
 
@@ -361,7 +446,7 @@ const POSModuleComponent: React.FC<POSModuleProps> = ({
     }
 
     return result;
-  }, [products, selectedCategory, stockFilter, selectedSupplierId, searchQuery, sortBy]);
+  }, [products, selectedCategory, stockFilter, selectedSupplierId, deferredSearchQuery, sortBy]);
 
   // Active filters count
   const activeFiltersCount = useMemo(() => {
@@ -395,7 +480,7 @@ const POSModuleComponent: React.FC<POSModuleProps> = ({
   };
 
   // Add Item to Cart
-  const handleAddToCart = (product: Product) => {
+  const handleAddToCart = useCallback((product: Product) => {
     if (product.stock <= 0) return;
 
     playKeyAudio(600);
@@ -424,7 +509,7 @@ const POSModuleComponent: React.FC<POSModuleProps> = ({
         ];
       }
     });
-  };
+  }, [settings.enableSoundEffects]);
 
   // Manual Search Modal Handlers
   const handleOpenManualSearch = (initialQueryStr = '', failedCode: string | null = null) => {
@@ -621,6 +706,153 @@ const POSModuleComponent: React.FC<POSModuleProps> = ({
   const tenderedNumber = parseFloat(amountTendered) || 0;
   const changeDue = Math.max(0, tenderedNumber - netTotal);
 
+  // References for live state in unmount/visibility change callbacks
+  const cartRef = useRef(cart);
+  cartRef.current = cart;
+  const selectedCustomerIdRef = useRef(selectedCustomerId);
+  selectedCustomerIdRef.current = selectedCustomerId;
+  const selectedCustomerRef = useRef(selectedCustomer);
+  selectedCustomerRef.current = selectedCustomer;
+  const grossSubtotalRef = useRef(grossSubtotal);
+  grossSubtotalRef.current = grossSubtotal;
+  const netTotalRef = useRef(netTotal);
+  netTotalRef.current = netTotal;
+  const discountTypeRef = useRef(discountType);
+  discountTypeRef.current = discountType;
+  const discountValueRef = useRef(discountValue);
+  discountValueRef.current = discountValue;
+  const isServiceFeeEnabledRef = useRef(isServiceFeeEnabled);
+  isServiceFeeEnabledRef.current = isServiceFeeEnabled;
+  const serviceFeeTypeRef = useRef(serviceFeeType);
+  serviceFeeTypeRef.current = serviceFeeType;
+  const serviceFeeValueRef = useRef(serviceFeeValue);
+  serviceFeeValueRef.current = serviceFeeValue;
+  const paymentMethodRef = useRef(paymentMethod);
+  paymentMethodRef.current = paymentMethod;
+  const amountTenderedRef = useRef(amountTendered);
+  amountTenderedRef.current = amountTendered;
+  const activeDraftIdRef = useRef(activeDraftId);
+  activeDraftIdRef.current = activeDraftId;
+
+  // Auto-save pending draft when tab switches or POS unmounts
+  const autoSavePendingDraft = useCallback(() => {
+    if (cartRef.current.length === 0) return;
+    const count = cartRef.current.reduce((acc, i) => acc + i.quantity, 0);
+    const draft = OfflineDB.saveCartDraft({
+      id: activeDraftIdRef.current || undefined,
+      cart: cartRef.current,
+      selectedCustomerId: selectedCustomerIdRef.current,
+      customerName: selectedCustomerRef.current ? selectedCustomerRef.current.name : 'Walk-in Customer',
+      customerPhone: selectedCustomerRef.current?.phone,
+      discountType: discountTypeRef.current,
+      discountValue: discountValueRef.current,
+      isServiceFeeEnabled: isServiceFeeEnabledRef.current,
+      serviceFeeType: serviceFeeTypeRef.current,
+      serviceFeeValue: serviceFeeValueRef.current,
+      paymentMethod: paymentMethodRef.current,
+      amountTendered: amountTenderedRef.current,
+      itemCount: count,
+      grossSubtotal: grossSubtotalRef.current,
+      notes: `Auto-saved draft with ${count} item(s)`,
+    });
+    setActiveDraftId(draft.id);
+    setDrafts(OfflineDB.getCartDrafts());
+  }, []);
+
+  // Save Cart as Draft manually
+  const handleSaveDraftManual = () => {
+    if (cart.length === 0) return;
+    const count = cart.reduce((acc, i) => acc + i.quantity, 0);
+    const draft = OfflineDB.saveCartDraft({
+      id: activeDraftId || undefined,
+      cart: [...cart],
+      selectedCustomerId,
+      customerName: selectedCustomer ? selectedCustomer.name : 'Walk-in Customer',
+      customerPhone: selectedCustomer?.phone,
+      discountType,
+      discountValue,
+      isServiceFeeEnabled,
+      serviceFeeType,
+      serviceFeeValue,
+      paymentMethod,
+      amountTendered,
+      itemCount: count,
+      grossSubtotal,
+      notes: `Manual draft saved at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+    });
+    setDrafts(OfflineDB.getCartDrafts());
+    setDraftsFeedbackToast(`Cart saved as Pending Draft (#${draft.id.slice(-4)})`);
+    setTimeout(() => setDraftsFeedbackToast(null), 3500);
+    clearCart();
+    setActiveDraftId(null);
+  };
+
+  // Resume a draft sale
+  const handleResumeDraft = (draft: CartDraft) => {
+    setCart(draft.cart || []);
+    if (draft.selectedCustomerId) {
+      setSelectedCustomerId(draft.selectedCustomerId);
+    }
+    if (draft.discountType) setDiscountType(draft.discountType);
+    if (draft.discountValue !== undefined) setDiscountValue(draft.discountValue);
+    if (draft.isServiceFeeEnabled !== undefined) setIsServiceFeeEnabled(draft.isServiceFeeEnabled);
+    if (draft.serviceFeeType) setServiceFeeType(draft.serviceFeeType);
+    if (draft.serviceFeeValue !== undefined) setServiceFeeValue(draft.serviceFeeValue);
+    if (draft.paymentMethod) setPaymentMethod(draft.paymentMethod);
+    if (draft.amountTendered) setAmountTendered(draft.amountTendered);
+
+    setActiveDraftId(draft.id);
+    OfflineDB.deleteCartDraft(draft.id);
+    setDrafts(OfflineDB.getCartDrafts());
+    setShowDraftsModal(false);
+
+    playKeyAudio(750);
+    setDraftsFeedbackToast(`Resumed draft sale for ${draft.customerName || 'Customer'} (${draft.cart?.length || 0} items)`);
+    setTimeout(() => setDraftsFeedbackToast(null), 3500);
+  };
+
+  const handleDeleteDraft = (draftId: string) => {
+    OfflineDB.deleteCartDraft(draftId);
+    setDrafts(OfflineDB.getCartDrafts());
+    if (activeDraftId === draftId) {
+      setActiveDraftId(null);
+    }
+  };
+
+  const handleClearAllDrafts = () => {
+    if (window.confirm('Are you sure you want to remove all pending cart drafts?')) {
+      OfflineDB.clearAllCartDrafts();
+      setDrafts([]);
+      setActiveDraftId(null);
+    }
+  };
+
+  // Window tab switch and visibility change listener
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden && cartRef.current.length > 0) {
+        autoSavePendingDraft();
+      }
+    };
+    const handleBlur = () => {
+      if (cartRef.current.length > 0) {
+        autoSavePendingDraft();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('blur', handleBlur);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('blur', handleBlur);
+      // Auto-save on component unmount when user switches tabs
+      if (cartRef.current.length > 0) {
+        autoSavePendingDraft();
+      }
+    };
+  }, [autoSavePendingDraft]);
+
   // Audio tone helper
   const playKeyAudio = (freq: number) => {
     if (!settings.enableSoundEffects) return;
@@ -661,7 +893,8 @@ const POSModuleComponent: React.FC<POSModuleProps> = ({
         ? prevBalance + netTotal
         : prevBalance;
 
-    const saleRecord: SaleInvoice = {
+    const pooledInvoice = saleInvoicePool.acquire();
+    const saleRecord: SaleInvoice = Object.assign(pooledInvoice, {
       id: `sale-${timestamp}`,
       invoiceNo,
       date: new Date().toLocaleString('en-US', {
@@ -693,8 +926,8 @@ const POSModuleComponent: React.FC<POSModuleProps> = ({
       loyaltyPointsRedeemed: pointsRedeemedNumber,
       loyaltyDiscountAmount: loyaltyDiscountAmount,
       customerTier: customerLoyaltyInfo?.tier,
-      status: 'completed',
-    };
+      status: 'completed' as const,
+    }) as SaleInvoice;
 
     // Trigger celebration effects
     confetti({
@@ -848,7 +1081,36 @@ const POSModuleComponent: React.FC<POSModuleProps> = ({
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Fuzzy search: Zari threads, laces, borders, Urdu (تلہ), SKU, barcode..."
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (!searchQuery.trim()) return;
+                    // If exactly 1 product is matched in the filtered list and in stock, add it
+                    if (filteredProducts.length === 1 && filteredProducts[0].stock > 0) {
+                      handleAddToCart(filteredProducts[0]);
+                      playKeyAudio(880);
+                      setSearchQuery('');
+                      return;
+                    }
+                    // Or look for exact SKU / barcode / Name match among filtered products
+                    const exact = filteredProducts.find(
+                      (p) =>
+                        p.sku.toLowerCase() === searchQuery.trim().toLowerCase() ||
+                        p.barcode === searchQuery.trim() ||
+                        p.name.toLowerCase() === searchQuery.trim().toLowerCase()
+                    );
+                    if (exact && exact.stock > 0) {
+                      handleAddToCart(exact);
+                      playKeyAudio(880);
+                      setSearchQuery('');
+                    } else if (filteredProducts.length > 0 && filteredProducts[0].stock > 0) {
+                      handleAddToCart(filteredProducts[0]);
+                      playKeyAudio(880);
+                      setSearchQuery('');
+                    }
+                  }
+                }}
+                placeholder="Fuzzy search: Zari threads, laces, borders, Urdu (تلہ), SKU, barcode, category..."
                 className={`w-full bg-slate-900 border-2 rounded-xl pl-9 pr-10 py-2.5 text-sm text-white font-medium placeholder-slate-400 focus:outline-none transition ${
                   isListening
                     ? 'border-red-500 ring-2 ring-red-500/40'
@@ -857,8 +1119,10 @@ const POSModuleComponent: React.FC<POSModuleProps> = ({
               />
               {searchQuery && (
                 <button
+                  type="button"
                   onClick={() => setSearchQuery('')}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-white"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-white cursor-pointer px-1.5 py-0.5 rounded-full hover:bg-slate-800"
+                  title="Clear search"
                 >
                   ✕
                 </button>
@@ -1129,74 +1393,16 @@ const POSModuleComponent: React.FC<POSModuleProps> = ({
             <div className="space-y-4">
               <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3">
                 {paginatedFilteredProducts.map((product) => {
-                  const isOutOfStock = product.stock <= 0;
-                  const isLowStock = product.stock > 0 && product.stock <= product.minStockAlert;
                   const inCart = cart.find((i) => i.product.id === product.id);
-
                   return (
-                    <button
+                    <POSProductCard
                       key={product.id}
-                      onClick={() => handleAddToCart(product)}
-                      disabled={isOutOfStock}
-                      className={`relative text-left p-3.5 rounded-xl border transition flex flex-col justify-between group ${
-                        isOutOfStock
-                          ? 'bg-slate-900/40 border-slate-800/60 opacity-60 cursor-not-allowed'
-                          : 'bg-slate-800/60 hover:bg-slate-800 border-slate-700/60 hover:border-amber-400/50 shadow-sm hover:shadow-md'
-                      }`}
-                    >
-                      {/* Top badging */}
-                      <div className="flex items-start justify-between gap-1.5 w-full mb-2">
-                        <span className="text-[10px] font-mono text-slate-400 bg-slate-900/80 px-1.5 py-0.5 rounded border border-slate-800">
-                          {product.sku}
-                        </span>
-                        {isOutOfStock ? (
-                          <span className="text-[10px] font-bold text-red-400 bg-red-500/15 border border-red-500/20 px-1.5 py-0.5 rounded">
-                            Out of Stock
-                          </span>
-                        ) : isLowStock ? (
-                          <span className="text-[10px] font-bold text-amber-300 bg-amber-500/15 border border-amber-500/20 px-1.5 py-0.5 rounded">
-                            Only {product.stock} {product.unit} left
-                          </span>
-                        ) : (
-                          <span className="text-[10px] font-medium text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">
-                            {product.stock} {product.unit}
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Product Title */}
-                      <div className="flex-1 my-1">
-                        <h4 className="text-sm font-semibold text-white group-hover:text-amber-400 transition leading-snug line-clamp-2">
-                          {product.name}
-                        </h4>
-                        {product.urduName && (
-                          <p className="font-urdu text-xs text-amber-300/80 mt-0.5 line-clamp-1">
-                            {product.urduName}
-                          </p>
-                        )}
-                      </div>
-
-                      {/* Bottom Price & Add Indicator */}
-                      <div className="flex items-center justify-between mt-3 pt-2 border-t border-slate-700/40 w-full">
-                        <div>
-                          <span className="text-xs text-slate-400">Rs </span>
-                          <span className="text-base font-bold text-white">
-                            {product.sellingPrice.toLocaleString()}
-                          </span>
-                          <span className="text-[10px] text-slate-400"> /{product.unit}</span>
-                        </div>
-
-                        {inCart ? (
-                          <span className="w-6 h-6 rounded-full bg-amber-500 text-slate-950 font-bold text-xs flex items-center justify-center shadow">
-                            {inCart.quantity}
-                          </span>
-                        ) : (
-                          <div className="w-6 h-6 rounded-full bg-slate-700/60 group-hover:bg-amber-500/20 text-slate-400 group-hover:text-amber-400 flex items-center justify-center transition">
-                            <Plus className="w-3.5 h-3.5" />
-                          </div>
-                        )}
-                      </div>
-                    </button>
+                      product={product}
+                      searchQuery={searchQuery}
+                      inCartQuantity={inCart?.quantity}
+                      onAddToCart={handleAddToCart}
+                      highlightPOSMatch={highlightPOSMatch}
+                    />
                   );
                 })}
               </div>
@@ -1221,30 +1427,108 @@ const POSModuleComponent: React.FC<POSModuleProps> = ({
       {/* ================= RIGHT PANEL: CART & BILLING DRAWER ================= */}
       <div className="w-full lg:w-[430px] xl:w-[470px] flex flex-col bg-slate-950/85 border-t lg:border-t-0 border-slate-800 overflow-hidden shrink-0">
         {/* Cart Header */}
-        <div className="p-4 border-b border-slate-800 flex items-center justify-between shrink-0 bg-slate-950">
+        <div className="p-3.5 sm:p-4 border-b border-slate-800 flex items-center justify-between shrink-0 bg-slate-950">
           <div className="flex items-center gap-2">
             <ShoppingBag className="w-5 h-5 text-amber-400" />
             <h3 className="text-base font-bold text-white">Active Cart</h3>
             <span className="px-2 py-0.5 bg-slate-800 text-slate-300 text-xs font-semibold rounded-full border border-slate-700">
               {cart.reduce((acc, i) => acc + i.quantity, 0)} items
             </span>
-            {cart.length > 0 && (
-              <span className="hidden md:inline-block text-[10px] text-slate-500 font-medium">
-                • Swipe left ← to delete
-              </span>
-            )}
           </div>
 
-          {cart.length > 0 && (
+          <div className="flex items-center gap-2">
+            {/* Pending Drafts Button */}
             <button
-              onClick={clearCart}
-              className="text-xs text-slate-400 hover:text-red-400 flex items-center gap-1 transition"
+              type="button"
+              onClick={() => setShowDraftsModal(true)}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition border ${
+                drafts.length > 0
+                  ? 'bg-amber-500/15 text-amber-300 border-amber-500/40 hover:bg-amber-500/25'
+                  : 'bg-slate-800/80 text-slate-400 border-slate-700 hover:text-slate-200'
+              }`}
+              title="View saved pending draft sales"
             >
-              <Trash2 className="w-3.5 h-3.5" />
-              Clear
+              <Clock className="w-3.5 h-3.5 text-amber-400" />
+              <span>Drafts</span>
+              {drafts.length > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-amber-400 text-slate-950">
+                  {drafts.length}
+                </span>
+              )}
             </button>
-          )}
+
+            {/* Save Current as Draft button */}
+            {cart.length > 0 && (
+              <button
+                type="button"
+                onClick={handleSaveDraftManual}
+                className="flex items-center gap-1 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 rounded-lg text-xs font-medium transition cursor-pointer"
+                title="Save current cart as pending draft and clear for next customer"
+              >
+                <FolderDown className="w-3.5 h-3.5 text-blue-400" />
+                <span className="hidden sm:inline">Save Draft</span>
+              </button>
+            )}
+
+            {cart.length > 0 && (
+              <button
+                onClick={clearCart}
+                className="text-xs text-slate-400 hover:text-red-400 flex items-center gap-1 transition px-1.5 py-1"
+                title="Clear current cart"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                Clear
+              </button>
+            )}
+          </div>
         </div>
+
+        {/* Drafts Feedback Toast */}
+        {draftsFeedbackToast && (
+          <div className="px-4 py-2 bg-emerald-500/20 border-b border-emerald-500/30 text-emerald-300 text-xs flex items-center justify-between animate-in fade-in duration-200">
+            <div className="flex items-center gap-2">
+              <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span className="font-semibold">{draftsFeedbackToast}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setDraftsFeedbackToast(null)}
+              className="text-emerald-400 hover:text-white"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
+        {/* Pending Draft Available Prompt (when current cart is empty but drafts exist) */}
+        {cart.length === 0 && drafts.length > 0 && (
+          <div className="p-3 bg-amber-500/10 border-b border-amber-500/25 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <Clock className="w-4 h-4 text-amber-400 shrink-0" />
+              <div className="text-xs truncate">
+                <span className="text-slate-300">Pending Draft: </span>
+                <strong className="text-amber-300 font-bold">{drafts[0].customerName || 'Walk-in'}</strong>
+                <span className="text-slate-400 ml-1 font-mono">({drafts[0].itemCount} items • Rs {drafts[0].grossSubtotal.toLocaleString()})</span>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => handleResumeDraft(drafts[0])}
+                className="px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-lg text-xs transition shadow-sm"
+              >
+                Resume Sale
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowDraftsModal(true)}
+                className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs transition"
+              >
+                All ({drafts.length})
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Customer Khata & Loyalty Profile Selector */}
         <div className="p-3 bg-slate-900/70 border-b border-slate-800 shrink-0 space-y-2">
@@ -1493,7 +1777,7 @@ const POSModuleComponent: React.FC<POSModuleProps> = ({
               </button>
             </div>
 
-            <div className="flex items-center gap-1.5 flex-1 max-w-[150px]">
+            <div className="flex items-center gap-1.5 flex-1 max-w-[170px]">
               <input
                 type="number"
                 min="0"
@@ -1505,6 +1789,21 @@ const POSModuleComponent: React.FC<POSModuleProps> = ({
               <span className="text-xs text-slate-300 font-bold">
                 {discountType === 'flat' ? 'Rs' : '%'}
               </span>
+              <button
+                type="button"
+                onClick={() =>
+                  openKeypad(
+                    `Set Discount (${discountType === 'flat' ? 'Rs' : '%'})`,
+                    discountValue || '',
+                    discountType === 'flat' ? 'Rs' : '%',
+                    (val) => setDiscountValue(parseFloat(val) || 0)
+                  )
+                }
+                title="Open Numeric Touch Keypad"
+                className="p-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 transition cursor-pointer"
+              >
+                <Calculator className="w-3.5 h-3.5" />
+              </button>
             </div>
           </div>
 
@@ -1624,6 +1923,21 @@ const POSModuleComponent: React.FC<POSModuleProps> = ({
                   <span className="text-[11px] text-slate-400 font-bold">
                     {serviceFeeType === 'flat' ? 'Rs' : '%'}
                   </span>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      openKeypad(
+                        `Set Service Fee (${serviceFeeType === 'flat' ? 'Rs' : '%'})`,
+                        serviceFeeValue || '',
+                        serviceFeeType === 'flat' ? 'Rs' : '%',
+                        (val) => setServiceFeeValue(Math.max(0, parseFloat(val) || 0))
+                      )
+                    }
+                    title="Open Touch Keypad"
+                    className="p-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-blue-400 border border-slate-700 transition cursor-pointer"
+                  >
+                    <Calculator className="w-3 h-3" />
+                  </button>
                 </div>
               </div>
             )}
@@ -1722,8 +2036,23 @@ const POSModuleComponent: React.FC<POSModuleProps> = ({
                   placeholder={String(netTotal)}
                   value={amountTendered}
                   onChange={(e) => setAmountTendered(e.target.value)}
-                  className="w-28 bg-slate-950 border border-slate-600 rounded-md px-2.5 py-1 text-right text-white font-bold focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400 placeholder-slate-500"
+                  className="w-24 bg-slate-950 border border-slate-600 rounded-md px-2 py-1 text-right text-white font-bold focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400 placeholder-slate-500"
                 />
+                <button
+                  type="button"
+                  onClick={() =>
+                    openKeypad(
+                      'Cash Received Tendered',
+                      amountTendered || netTotal,
+                      'Rs',
+                      (val) => setAmountTendered(val)
+                    )
+                  }
+                  title="Open Keypad"
+                  className="p-1 rounded bg-slate-800 hover:bg-slate-700 text-amber-400 border border-slate-700 transition cursor-pointer"
+                >
+                  <Calculator className="w-3.5 h-3.5" />
+                </button>
               </div>
               <div>
                 <span className="text-slate-300">Change: </span>
@@ -2081,6 +2410,171 @@ const POSModuleComponent: React.FC<POSModuleProps> = ({
         onClose={() => setIsScannerOpen(false)}
         onScan={handleBarcodeScanned}
       />
+
+      {/* Touch-Friendly On-Screen Numeric Keypad Modal */}
+      <POSNumericKeypad
+        isOpen={keypadConfig.isOpen}
+        onClose={() => setKeypadConfig((prev) => ({ ...prev, isOpen: false }))}
+        title={keypadConfig.title}
+        unitLabel={keypadConfig.unitLabel}
+        initialValue={keypadConfig.initialValue}
+        onApply={keypadConfig.onApply}
+      />
+
+      {/* Pending Drafts Drawer / Modal */}
+      {showDraftsModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-150"
+          onClick={() => setShowDraftsModal(false)}
+        >
+          <div
+            className="bg-slate-900 border border-slate-800 w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800 bg-slate-950/70">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+                  <Clock className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base font-bold text-white">Pending Cart Drafts</h3>
+                    <span className="text-xs font-mono font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                      {drafts.length} Saved
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400">
+                    Auto-saved drafts from tab switching and paused transactions
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowDraftsModal(false)}
+                className="p-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Drafts List */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {drafts.length === 0 ? (
+                <div className="text-center py-12 px-4 space-y-3">
+                  <div className="w-12 h-12 rounded-2xl bg-slate-800 flex items-center justify-center text-slate-500 mx-auto">
+                    <Clock className="w-6 h-6" />
+                  </div>
+                  <h4 className="text-sm font-semibold text-slate-300">No Pending Drafts Found</h4>
+                  <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                    Active carts are automatically saved when you switch tabs or click "Save Draft" in the cart header.
+                  </p>
+                </div>
+              ) : (
+                drafts.map((draft, idx) => {
+                  const itemsCount = (draft.cart || []).reduce((sum, item) => sum + item.quantity, 0);
+                  const total = draft.grossSubtotal || (draft.cart || []).reduce((sum, item) => sum + (item.subtotal || item.quantity * item.unitPrice), 0);
+
+                  return (
+                    <div
+                      key={draft.id}
+                      className="p-4 rounded-xl bg-slate-950 border border-slate-800 hover:border-amber-500/30 transition flex flex-col sm:flex-row sm:items-center justify-between gap-3 group"
+                    >
+                      <div className="space-y-1.5 flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[11px] font-mono font-bold px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                            #{draft.id.slice(-6)}
+                          </span>
+                          <span className="text-xs font-bold text-white truncate">
+                            {draft.customerName || 'Walk-in Customer'}
+                          </span>
+                          {draft.customerPhone && (
+                            <span className="text-[11px] text-slate-400 font-mono">
+                              ({draft.customerPhone})
+                            </span>
+                          )}
+                          <span className="text-[11px] text-slate-400 flex items-center gap-1">
+                            <Clock className="w-3 h-3 text-slate-500" />
+                            {draft.savedAt || new Date(draft.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+
+                        {/* Items preview snippet */}
+                        <div className="text-xs text-slate-400 line-clamp-1">
+                          {(draft.cart || [])
+                            .map((i) => `${i.quantity}x ${i.product?.name || 'Item'}`)
+                            .join(', ')}
+                        </div>
+
+                        <div className="flex items-center gap-3 text-xs pt-0.5">
+                          <span className="text-slate-400">
+                            Items: <strong className="text-slate-200">{itemsCount}</strong>
+                          </span>
+                          <span className="text-slate-400">
+                            Total: <strong className="text-amber-400 font-mono">Rs {total.toLocaleString()}</strong>
+                          </span>
+                          {draft.paymentMethod && (
+                            <span className="text-[10px] uppercase font-bold px-1.5 py-0.2 rounded bg-slate-800 text-slate-400">
+                              {draft.paymentMethod}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Action buttons */}
+                      <div className="flex items-center gap-2 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-800/80">
+                        <button
+                          type="button"
+                          onClick={() => handleResumeDraft(draft)}
+                          className="flex items-center gap-1.5 px-3.5 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-xl text-xs transition shadow-sm cursor-pointer"
+                          title="Load this draft into active cart"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" />
+                          <span>Resume Sale</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteDraft(draft.id)}
+                          className="p-2 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-xl transition"
+                          title="Delete draft"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="px-5 py-3 border-t border-slate-800 bg-slate-950/60 flex items-center justify-between">
+              {drafts.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={handleClearAllDrafts}
+                  className="text-xs text-red-400 hover:text-red-300 flex items-center gap-1 transition"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Clear All Drafts</span>
+                </button>
+              ) : (
+                <div />
+              )}
+
+              <button
+                type="button"
+                onClick={() => setShowDraftsModal(false)}
+                className="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold transition"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

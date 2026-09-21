@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useCallback, useDeferredValue } from 'react';
 import {
   Package,
   Plus,
@@ -25,6 +25,7 @@ import {
   AlertCircle,
   FileDown,
   Sparkles,
+  Percent,
 } from 'lucide-react';
 import { Product, UserProfile, UnitType } from '../../types';
 import {
@@ -41,6 +42,7 @@ import { OfflineDB } from '../../services/db';
 import { CSVBulkImportModal } from './CSVBulkImportModal';
 import { BulkUpdateModal } from './BulkUpdateModal';
 import { SuggestCategoriesModal } from './SuggestCategoriesModal';
+import { InventoryProductRow } from './InventoryProductRow';
 import { PaginationControls } from '../common/PaginationControls';
 import { TableSkeleton } from '../common/SkeletonLoaders';
 import { exportToCSV } from '../../utils/csvExport';
@@ -160,6 +162,13 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
   const [isBulkResetStockModalOpen, setIsBulkResetStockModalOpen] = useState(false);
   const [bulkResetStockValue, setBulkResetStockValue] = useState<string>('0');
   const [bulkResetSafetyConfirmed, setBulkResetSafetyConfirmed] = useState(false);
+
+  // Bulk Price Adjustment State
+  const [isBatchPriceAdjustmentOpen, setIsBatchPriceAdjustmentOpen] = useState(false);
+  const [priceAdjustmentMode, setPriceAdjustmentMode] = useState<'markup' | 'markdown'>('markup');
+  const [priceAdjustmentTarget, setPriceAdjustmentTarget] = useState<'sellingPrice' | 'costPrice' | 'both'>('sellingPrice');
+  const [priceAdjustmentPercent, setPriceAdjustmentPercent] = useState<string>('10');
+  const [priceAdjustmentSafetyConfirmed, setPriceAdjustmentSafetyConfirmed] = useState(false);
 
   // Move to Category State
   const [isMoveCategoryModalOpen, setIsMoveCategoryModalOpen] = useState(false);
@@ -311,9 +320,11 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
     return arr;
   }, [products, categoryChartMetric]);
 
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+
   // Filtered products with real-time fuzzy search & natural language query parser
   const filteredProducts = useMemo(() => {
-    const rawQuery = searchQuery.toLowerCase().trim();
+    const rawQuery = deferredSearchQuery.toLowerCase().trim();
 
     // Natural Language Query Parsing (e.g., "show gold items under 5000", "below 1000", "over 2000")
     let maxPrice: number | null = null;
@@ -361,7 +372,7 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
 
       return matchCat && matchSearch && matchPrice && matchStock;
     });
-  }, [products, selectedCategory, searchQuery, stockFilter]);
+  }, [products, selectedCategory, deferredSearchQuery, stockFilter]);
 
   // Paginated products slice for instantaneous UI rendering
   const paginatedProducts = useMemo(() => {
@@ -425,10 +436,10 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
   };
 
   // Quick Stock Adjustment (+/- 1, 5, 10)
-  const handleQuickStock = (productId: string, delta: number) => {
+  const handleQuickStock = useCallback((productId: string, delta: number) => {
     OfflineDB.adjustStock(productId, delta);
     onRefreshProducts();
-  };
+  }, [onRefreshProducts]);
 
   // Open Edit Modal
   const openNewProductModal = () => {
@@ -449,10 +460,10 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
     setIsEditModalOpen(true);
   };
 
-  const openEditProductModal = (product: Product) => {
+  const openEditProductModal = useCallback((product: Product) => {
     setEditingProduct({ ...product });
     setIsEditModalOpen(true);
-  };
+  }, []);
 
   // Save Product
   const handleSaveProduct = (e: React.FormEvent) => {
@@ -483,9 +494,9 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
   };
 
   // Delete Product with custom in-app confirmation
-  const handleDeleteProduct = (product: Product) => {
+  const handleDeleteProduct = useCallback((product: Product) => {
     setProductToDelete(product);
-  };
+  }, []);
 
   const confirmDeleteProduct = () => {
     if (!productToDelete) return;
@@ -500,11 +511,16 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
   };
 
   // Multi-Select Handlers
-  const handleToggleSelectProduct = (productId: string) => {
+  const handleToggleSelectProduct = useCallback((productId: string) => {
     setSelectedProductIds((prev) =>
       prev.includes(productId) ? prev.filter((id) => id !== productId) : [...prev, productId]
     );
-  };
+  }, []);
+
+  const handleOpenQuickAdjust = useCallback((product: Product) => {
+    setQuickAdjustProduct(product);
+    setCustomAdjustValue(product.stock.toString());
+  }, []);
 
   const handleToggleSelectAll = () => {
     const pageIds = paginatedProducts.map((p) => p.id);
@@ -592,6 +608,85 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
         ...prev,
         status: 'error',
         errorMessage: err?.message || 'Failed to complete physical stock reset.',
+      }));
+    }
+  };
+
+  // Bulk Price Adjustment Handlers
+  const handleOpenBatchPriceAdjustment = () => {
+    if (selectedProductIds.length === 0) return;
+    setPriceAdjustmentMode('markup');
+    setPriceAdjustmentTarget('sellingPrice');
+    setPriceAdjustmentPercent('10');
+    setPriceAdjustmentSafetyConfirmed(false);
+    setIsBatchPriceAdjustmentOpen(true);
+  };
+
+  const confirmBatchPriceAdjustment = async () => {
+    const pct = parseFloat(priceAdjustmentPercent);
+    if (isNaN(pct) || pct < 0 || selectedProductIds.length === 0) return;
+
+    setIsBatchPriceAdjustmentOpen(false);
+    const count = selectedProductIds.length;
+    const multiplier = priceAdjustmentMode === 'markup' ? 1 + pct / 100 : 1 - pct / 100;
+    if (multiplier <= 0) return;
+
+    const updates = selectedProducts.map((p) => {
+      let newSelling = p.sellingPrice;
+      let newCost = p.costPrice;
+      if (priceAdjustmentTarget === 'sellingPrice' || priceAdjustmentTarget === 'both') {
+        newSelling = Math.round(p.sellingPrice * multiplier);
+      }
+      if (priceAdjustmentTarget === 'costPrice' || priceAdjustmentTarget === 'both') {
+        newCost = Math.round(p.costPrice * multiplier);
+      }
+      return {
+        ...p,
+        sellingPrice: newSelling,
+        costPrice: newCost,
+        updatedAt: new Date().toISOString(),
+      };
+    });
+
+    setActionLoader({
+      isOpen: true,
+      title: 'Applying Price Adjustment',
+      description: `Applying ${priceAdjustmentMode} of ${pct}% to ${count} selected product(s)...`,
+      currentCount: 0,
+      totalCount: count,
+      status: 'running',
+      actionIcon: 'generic',
+    });
+
+    try {
+      for (let i = 0; i < updates.length; i++) {
+        await OfflineDB.saveProduct(updates[i], currentUser?.email || 'admin');
+        setActionLoader((prev) => ({ ...prev, currentCount: i + 1 }));
+      }
+
+      OfflineDB.addAuditLog({
+        userEmail: currentUser?.email || 'admin',
+        actionType: 'PRICE_CHANGE',
+        details: `Batch price adjustment (${priceAdjustmentMode} ${pct}%) applied to ${count} products (${priceAdjustmentTarget})`,
+      });
+
+      setSelectedProductIds([]);
+      setActionLoader((prev) => ({
+        ...prev,
+        status: 'completed',
+        description: `Successfully applied ${priceAdjustmentMode} (${pct}%) to ${count} product(s).`,
+      }));
+
+      onRefreshProducts();
+
+      setTimeout(() => {
+        setActionLoader((prev) => ({ ...prev, isOpen: false }));
+      }, 1400);
+    } catch (err: any) {
+      setActionLoader((prev) => ({
+        ...prev,
+        status: 'error',
+        errorMessage: err?.message || 'Failed to complete batch price adjustment.',
       }));
     }
   };
@@ -922,11 +1017,11 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
             {isAdmin && (
               <button
                 onClick={() => setIsBulkImportModalOpen(true)}
-                className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold transition shadow-sm cursor-pointer"
-                title="Bulk import products from CSV with validation preview and mapping"
+                className="flex items-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold transition shadow-sm hover:shadow-blue-500/20 cursor-pointer"
+                title="Import CSV: Bulk update product stock, pricing, and catalog details with real-time pre-commit validation"
               >
                 <FileSpreadsheet className="w-4 h-4" />
-                Bulk CSV Import
+                <span>Import CSV</span>
               </button>
             )}
 
@@ -1532,6 +1627,17 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
               </button>
             )}
 
+            {/* Bulk Price Adjustment */}
+            <button
+              type="button"
+              onClick={handleOpenBatchPriceAdjustment}
+              className="px-3 py-1.5 bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/30 rounded-xl font-bold flex items-center gap-1.5 shadow-md transition cursor-pointer"
+              title="Apply percentage markup or markdown to selected products"
+            >
+              <Percent className="w-3.5 h-3.5 text-amber-400" />
+              <span>Price Adjustment</span>
+            </button>
+
             {/* Export Selected to CSV */}
             <button
               onClick={handleExportSelected}
@@ -1604,141 +1710,22 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
                   </td>
                 </tr>
               ) : (
-                paginatedProducts.map((p) => {
-                const isOutOfStock = p.stock <= 0;
-                const isLow = p.stock > 0 && p.stock <= p.minStockAlert;
-                const isSelected = selectedProductIds.includes(p.id);
-                const isSearchActive = searchQuery.trim().length > 0;
-
-                return (
-                  <tr
+                paginatedProducts.map((p) => (
+                  <InventoryProductRow
                     key={p.id}
-                    className={`transition group ${
-                      isSelected
-                        ? 'bg-amber-500/20 hover:bg-amber-500/25'
-                        : isSearchActive
-                        ? 'bg-amber-500/10 border-l-4 border-l-amber-400 hover:bg-amber-500/15 shadow-sm'
-                        : 'hover:bg-slate-900/50'
-                    }`}
-                  >
-                    {/* Checkbox */}
-                    <td className="p-3.5 text-center">
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() => handleToggleSelectProduct(p.id)}
-                        aria-label={`Select ${p.name}`}
-                        className="rounded border-slate-700 text-amber-500 focus:ring-amber-400 w-4 h-4 bg-slate-800 cursor-pointer"
-                      />
-                    </td>
-
-                    {/* Name */}
-                    <td className="p-3.5">
-                      <div className="font-bold text-white text-sm">
-                        {highlightMatch(p.name, searchQuery)}
-                      </div>
-                      {p.urduName && (
-                        <div className="font-urdu text-amber-400/90 text-xs mt-0.5">
-                          {highlightMatch(p.urduName, searchQuery)}
-                        </div>
-                      )}
-                      {p.notes && <div className="text-[11px] text-slate-500 italic mt-0.5">{p.notes}</div>}
-                    </td>
-
-                    {/* Category */}
-                    <td className="p-3.5 text-slate-300 font-medium">{p.category}</td>
-
-                    {/* SKU & Barcode */}
-                    <td className="p-3.5 font-mono">
-                      <div className="text-amber-300/90 font-semibold">
-                        {highlightMatch(p.sku, searchQuery)}
-                      </div>
-                      <div className="text-[11px] text-slate-500">
-                        {highlightMatch(p.barcode, searchQuery)}
-                      </div>
-                    </td>
-
-                    {/* Cost (Admin Only) */}
-                    {isAdmin && (
-                      <td className="p-3.5 text-right text-slate-400 font-medium">
-                        Rs {p.costPrice.toLocaleString()}
-                      </td>
-                    )}
-
-                    {/* Selling Price */}
-                    <td className="p-3.5 text-right font-bold text-white">
-                      Rs {p.sellingPrice.toLocaleString()}
-                      <span className="text-[10px] text-slate-500 font-normal"> /{p.unit}</span>
-                    </td>
-
-                    {/* Stock Level Badge */}
-                    <td className="p-3.5 text-center">
-                      <span
-                        className={`inline-block px-2.5 py-1 rounded-full text-xs font-bold ${
-                          isOutOfStock
-                            ? 'bg-red-500/20 text-red-400 border border-red-500/30'
-                            : isLow
-                            ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                            : 'bg-emerald-500/15 text-emerald-400'
-                        }`}
-                      >
-                        {p.stock} {p.unit}
-                      </span>
-                    </td>
-
-                    {/* Quick Stock Controls & Popover */}
-                    <td className="p-3.5 text-center">
-                      <div className="inline-flex items-center gap-1.5 bg-slate-900/90 p-1 rounded-xl border border-slate-800">
-                        <button
-                          onClick={() => handleQuickStock(p.id, -1)}
-                          className="w-6 h-6 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center font-bold text-xs"
-                          title="Quick -1 unit"
-                        >
-                          -1
-                        </button>
-                        <button
-                          onClick={() => handleQuickStock(p.id, 1)}
-                          className="w-6 h-6 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center font-bold text-xs"
-                          title="Quick +1 unit"
-                        >
-                          +1
-                        </button>
-                        <button
-                          onClick={() => {
-                            setQuickAdjustProduct(p);
-                            setCustomAdjustValue(p.stock.toString());
-                          }}
-                          className="px-2 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 font-bold text-[11px] flex items-center gap-1 transition"
-                          title="Open Quick Adjust stock dialog"
-                        >
-                          <Layers className="w-3 h-3" />
-                          Adjust
-                        </button>
-                      </div>
-                    </td>
-
-                    {/* Edit & Delete Actions */}
-                    <td className="p-3.5 text-right">
-                      <div className="flex items-center justify-end gap-1.5">
-                        <button
-                          onClick={() => openEditProductModal(p)}
-                          className="p-1.5 text-slate-400 hover:text-amber-400 hover:bg-slate-800 rounded-lg transition"
-                          title="Edit Product"
-                        >
-                          <Edit2 className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => handleDeleteProduct(p)}
-                          className="p-1.5 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition border border-transparent hover:border-red-500/20 cursor-pointer"
-                          title="Delete Product"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              }))}
+                    product={p}
+                    isAdmin={isAdmin}
+                    isSelected={selectedProductIds.includes(p.id)}
+                    searchQuery={searchQuery}
+                    onToggleSelect={handleToggleSelectProduct}
+                    onQuickStock={handleQuickStock}
+                    onOpenQuickAdjust={handleOpenQuickAdjust}
+                    onEditProduct={openEditProductModal}
+                    onDeleteProduct={handleDeleteProduct}
+                    highlightMatch={highlightMatch}
+                  />
+                ))
+              )}
             </tbody>
           </table>
         </div>
@@ -2414,6 +2401,153 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
                 }`}
               >
                 Confirm Move Category ({selectedProductIds.length})
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= BULK PRICE ADJUSTMENT MODAL ================= */}
+      {isBatchPriceAdjustmentOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/85 backdrop-blur-md p-4 animate-in fade-in">
+          <div className="relative w-full max-w-lg bg-slate-900 border border-amber-500/50 rounded-2xl shadow-2xl p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center shrink-0">
+                <Percent className="w-6 h-6 text-amber-400" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Bulk Price Adjustment</h3>
+                <p className="text-xs text-slate-400">
+                  Apply percentage-based markup or markdown to selected products
+                </p>
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-slate-950 rounded-xl border border-slate-800 space-y-3 text-xs">
+              {/* Mode: Markup vs Markdown */}
+              <div className="flex items-center justify-between">
+                <label className="text-slate-300 font-semibold">Adjustment Type:</label>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPriceAdjustmentMode('markup')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                      priceAdjustmentMode === 'markup'
+                        ? 'bg-emerald-600 text-white shadow-md'
+                        : 'bg-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    📈 Markup (+)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPriceAdjustmentMode('markdown')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                      priceAdjustmentMode === 'markdown'
+                        ? 'bg-rose-600 text-white shadow-md'
+                        : 'bg-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    📉 Markdown (-)
+                  </button>
+                </div>
+              </div>
+
+              {/* Target Price Field */}
+              <div className="flex items-center justify-between">
+                <label className="text-slate-300 font-semibold">Target Price Field:</label>
+                <select
+                  value={priceAdjustmentTarget}
+                  onChange={(e) => setPriceAdjustmentTarget(e.target.value as any)}
+                  className="px-3 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-white font-medium text-xs focus:outline-none focus:border-amber-400"
+                >
+                  <option value="sellingPrice">Selling Price Only</option>
+                  <option value="costPrice">Cost Price Only</option>
+                  <option value="both">Both Selling & Cost Price</option>
+                </select>
+              </div>
+
+              {/* Percentage input */}
+              <div className="flex items-center justify-between">
+                <label className="text-slate-300 font-semibold">Adjustment Percentage (%):</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.5"
+                    value={priceAdjustmentPercent}
+                    onChange={(e) => setPriceAdjustmentPercent(e.target.value)}
+                    className="w-24 px-3 py-1.5 bg-slate-900 border border-amber-500/50 rounded-lg text-white font-mono font-bold text-center focus:outline-none focus:border-amber-400 text-sm"
+                  />
+                  <span className="text-slate-400 text-xs">%</span>
+                </div>
+              </div>
+
+              {/* Preview list */}
+              <div className="max-h-36 overflow-y-auto rounded-lg border border-slate-800 bg-slate-900/80 p-2 divide-y divide-slate-800/60 custom-scrollbar">
+                {selectedProducts.slice(0, 12).map((p) => {
+                  const pct = parseFloat(priceAdjustmentPercent) || 0;
+                  const mult = priceAdjustmentMode === 'markup' ? 1 + pct / 100 : 1 - pct / 100;
+                  const oldP = priceAdjustmentTarget === 'costPrice' ? p.costPrice : p.sellingPrice;
+                  const newP = Math.round(oldP * mult);
+                  const diff = newP - oldP;
+                  return (
+                    <div key={p.id} className="py-1.5 flex items-center justify-between text-[11px]">
+                      <div className="truncate mr-2">
+                        <span className="font-semibold text-white">{p.name}</span>
+                        <span className="text-slate-500 font-mono ml-1.5">({p.sku})</span>
+                      </div>
+                      <div className="flex items-center gap-2 font-mono shrink-0">
+                        <span className="text-slate-400">Rs {oldP}</span>
+                        <span className="text-slate-600">→</span>
+                        <span className="font-bold text-amber-300">Rs {newP}</span>
+                        <span className={`text-[10px] font-bold ${diff > 0 ? 'text-emerald-400' : diff < 0 ? 'text-rose-400' : 'text-slate-500'}`}>
+                          ({diff > 0 ? `+${diff}` : diff})
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+                {selectedProducts.length > 12 && (
+                  <div className="py-1 text-center text-[10px] text-slate-500 italic">
+                    ...and {selectedProducts.length - 12} more items
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Safety Confirmation Checkbox */}
+            <label className="flex items-start gap-2.5 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={priceAdjustmentSafetyConfirmed}
+                onChange={(e) => setPriceAdjustmentSafetyConfirmed(e.target.checked)}
+                className="mt-0.5 rounded border-amber-500/50 bg-slate-900 text-amber-500 focus:ring-0 w-4 h-4 cursor-pointer"
+              />
+              <span className="text-xs text-amber-200/90 leading-snug">
+                I confirm applying a {priceAdjustmentMode} of {priceAdjustmentPercent || 0}% to {priceAdjustmentTarget} across {selectedProductIds.length} selected product(s).
+              </span>
+            </label>
+
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setIsBatchPriceAdjustmentOpen(false)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmBatchPriceAdjustment}
+                disabled={!priceAdjustmentSafetyConfirmed || isNaN(parseFloat(priceAdjustmentPercent))}
+                className={`px-5 py-2 rounded-xl text-xs font-bold shadow-lg transition ${
+                  priceAdjustmentSafetyConfirmed && !isNaN(parseFloat(priceAdjustmentPercent))
+                    ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-amber-600/30 cursor-pointer'
+                    : 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                }`}
+              >
+                Confirm Price Adjustment ({selectedProductIds.length})
               </button>
             </div>
           </div>

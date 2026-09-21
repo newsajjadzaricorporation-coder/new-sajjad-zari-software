@@ -133,17 +133,17 @@ try {
       }
     }
 
-    // Initialize Auth safely with local browser persistence & argument validation
+    // Initialize Auth safely with standard singleton getAuth
     try {
-      auth = initializeAuth(app, {
-        persistence: browserLocalPersistence,
-      });
+      auth = getAuth(app);
     } catch (authInitErr: any) {
-      if (authInitErr?.code === 'auth/already-initialized') {
-        auth = getAuth(app);
-      } else {
-        console.warn('Fallback initializing default Auth:', authInitErr);
-        auth = getAuth(app);
+      console.warn('Fallback initializing default Auth:', authInitErr);
+      try {
+        auth = initializeAuth(app, {
+          persistence: browserLocalPersistence,
+        });
+      } catch {
+        auth = null;
       }
     }
 
@@ -197,11 +197,15 @@ export async function testFirestoreConnection(): Promise<boolean> {
 export { app, db, auth, analytics, isConfigured };
 
 export async function loginWithGoogle() {
-  if (!auth) {
-    throw new Error('Firebase Auth not configured or running in offline mode.');
+  const currentAuth = auth || (app ? getAuth(app) : null);
+  if (!currentAuth) {
+    throw new Error('Firebase Auth is not available. Please sign in using your Staff PIN.');
   }
   const provider = new GoogleAuthProvider();
-  return signInWithPopup(auth, provider);
+  provider.setCustomParameters({
+    prompt: 'select_account',
+  });
+  return signInWithPopup(currentAuth, provider);
 }
 
 export async function logoutUser() {

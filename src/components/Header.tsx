@@ -35,6 +35,8 @@ import { usePWAInstall } from '../hooks/usePWAInstall';
 import { useApp } from '../context/AppProvider';
 import { useLanguage } from '../context/LanguageContext';
 import { SyncDiagnostics } from './SyncDiagnostics';
+import { NetworkHealthIndicator } from './NetworkHealthIndicator';
+import { OfflineDebuggerModal } from './OfflineDebuggerModal';
 
 interface HeaderProps {
   currentUser: UserProfile;
@@ -77,7 +79,18 @@ export const Header: React.FC<HeaderProps> = ({
   const { language, toggleLanguage, t, isUrdu } = useLanguage();
   const { isInstallable, install } = usePWAInstall();
   const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [showOfflineDebugger, setShowOfflineDebugger] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [isManualReSyncing, setIsManualReSyncing] = useState(false);
+
+  const handleManualReSync = async () => {
+    setIsManualReSyncing(true);
+    try {
+      await checkSyncNow();
+    } finally {
+      setIsManualReSyncing(false);
+    }
+  };
 
   const isSyncInProgress = isSyncing || isCheckingSync;
   const isServerSynced = isOnline && (firestoreStatus === 'connected' || firestoreStatus === 'offline_cache') && !isSyncInProgress;
@@ -171,6 +184,23 @@ export const Header: React.FC<HeaderProps> = ({
                   <span className="tracking-wide">Synced</span>
                 </>
               )}
+            </motion.button>
+
+            {/* Network Health Monitor & Proactive Ping/WebSocket Reconnect */}
+            <NetworkHealthIndicator onOpenOfflineDebugger={() => setShowOfflineDebugger(true)} />
+
+            {/* Header 'Attempt Re-Sync' Heartbeat Trigger */}
+            <motion.button
+              type="button"
+              whileHover={{ scale: 1.04 }}
+              whileTap={{ scale: 0.96 }}
+              onClick={handleManualReSync}
+              disabled={isManualReSyncing || isSyncInProgress}
+              className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-amber-500/40 text-amber-300 rounded-lg text-xs font-bold transition shadow-sm cursor-pointer disabled:opacity-50"
+              title="Manually force database heartbeat check & cache verification"
+            >
+              <RefreshCw className={`w-3 h-3 text-amber-400 ${isManualReSyncing ? 'animate-spin' : ''}`} />
+              <span>{isManualReSyncing ? 'Checking...' : 'Attempt Re-Sync'}</span>
             </motion.button>
 
             {/* Language Switcher Button (English / Urdu) */}
@@ -453,6 +483,12 @@ export const Header: React.FC<HeaderProps> = ({
       <SyncDiagnostics
         isOpen={showDiagnostics}
         onClose={() => setShowDiagnostics(false)}
+      />
+
+      {/* Offline Debugger & Cache Storage Quota Modal */}
+      <OfflineDebuggerModal
+        isOpen={showOfflineDebugger}
+        onClose={() => setShowOfflineDebugger(false)}
       />
     </header>
   );

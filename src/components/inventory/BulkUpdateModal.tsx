@@ -35,7 +35,7 @@ export interface BulkUpdateModalProps {
   onRemoveFromSelection?: (productId: string) => void;
 }
 
-export const BulkUpdateModal: React.FC<BulkUpdateModalProps> = ({
+export const BulkUpdateModal: React.FC<BulkUpdateModalProps> = React.memo(({
   isOpen,
   onClose,
   selectedProducts,
@@ -942,4 +942,4 @@ export const BulkUpdateModal: React.FC<BulkUpdateModalProps> = ({
       </div>
     </div>
   );
-};
+});

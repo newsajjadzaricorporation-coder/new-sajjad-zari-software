@@ -17,10 +17,14 @@ import {
   Lock,
   Clock,
   Zap,
+  UploadCloud,
+  Image as ImageIcon,
+  Check,
 } from 'lucide-react';
 import { ShopSettings, UserProfile } from '../types';
 import { OfflineDB } from '../services/db';
 import { ESCPOSPrinter } from '../utils/escpos';
+import { THERMAL_LOGO_PRESETS } from '../utils/thermalLogos';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -40,6 +44,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [formData, setFormData] = useState<ShopSettings>({
     ...initialSettings,
     address: initialSettings.address || '',
+    printBusinessLogo: initialSettings.printBusinessLogo ?? true,
     autoPrintOnSale: initialSettings.autoPrintOnSale ?? initialSettings.autoPrintReceipt ?? false,
     autoPrintReceipt: initialSettings.autoPrintOnSale ?? initialSettings.autoPrintReceipt ?? false,
     dailyRevenueTarget: initialSettings.dailyRevenueTarget ?? initialSettings.dailySalesGoal ?? 75000,
@@ -235,53 +240,150 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </p>
               </div>
 
-              {/* Company Logo Upload / URL */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1.5 flex items-center gap-1.5">
-                  <Store className="w-4 h-4 text-amber-400" />
-                  Company Logo / Brand Emblem (رسید کا لوگو)
-                </label>
-                <div className="flex items-center gap-4">
-                  {formData.logoUrl ? (
-                    <div className="relative w-16 h-16 rounded-xl border border-slate-700 bg-slate-950 flex items-center justify-center overflow-hidden shrink-0">
-                      <img src={formData.logoUrl} alt="Company Logo" className="w-full h-full object-contain p-1" />
+              {/* Company Logo & Thermal Receipt Branding Studio */}
+              <div className="p-4 bg-slate-950/70 rounded-2xl border border-slate-800 space-y-4 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
+                  <div className="space-y-0.5">
+                    <label className="text-xs font-bold text-white flex items-center gap-1.5">
+                      <Store className="w-4 h-4 text-amber-400" />
+                      <span>Thermal Receipt Branding & Business Logo</span>
+                      <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/20">
+                        80mm / 58mm / A4
+                      </span>
+                    </label>
+                    <p className="text-[11px] text-slate-400">
+                      Upload your shop logo or select from pre-designed high-contrast thermal emblems for receipts
+                    </p>
+                  </div>
+
+                  {/* Settings Toggle: Print Business Logo */}
+                  <label className="relative inline-flex items-center cursor-pointer gap-2 bg-slate-900 px-3 py-1.5 rounded-xl border border-slate-700 hover:border-amber-400/50 transition">
+                    <input
+                      type="checkbox"
+                      checked={formData.printBusinessLogo ?? true}
+                      onChange={(e) => setFormData({ ...formData, printBusinessLogo: e.target.checked })}
+                      className="w-4 h-4 rounded text-amber-500 bg-slate-800 border-slate-700 focus:ring-amber-400 cursor-pointer"
+                    />
+                    <span className="text-xs font-semibold text-slate-200">
+                      {formData.printBusinessLogo ?? true ? 'Logo Enabled (فعال ہے)' : 'Logo Disabled (چھپائیں)'}
+                    </span>
+                  </label>
+                </div>
+
+                {/* Preset Logo Selection Grid */}
+                <div className="space-y-2">
+                  <span className="text-[11px] font-semibold text-slate-300 flex items-center justify-between">
+                    <span>Choose from High-Contrast Thermal Presets (تیار شدہ لوگو منتخب کریں):</span>
+                    {formData.logoUrl && (
                       <button
                         type="button"
                         onClick={() => setFormData({ ...formData, logoUrl: '' })}
-                        className="absolute top-0.5 right-0.5 bg-red-600 hover:bg-red-500 text-white p-0.5 rounded-full text-[10px] cursor-pointer"
-                        title="Remove Logo"
+                        className="text-[10px] text-red-400 hover:text-red-300 underline cursor-pointer"
                       >
-                        ✕
+                        Reset / Clear Logo
                       </button>
+                    )}
+                  </span>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2">
+                    {THERMAL_LOGO_PRESETS.map((preset) => {
+                      const isSelected = formData.logoUrl === preset.svgDataUri;
+                      return (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          onClick={() => setFormData({ ...formData, logoUrl: preset.svgDataUri, printBusinessLogo: true })}
+                          className={`p-2 rounded-xl border text-left flex flex-col items-center justify-center gap-1.5 transition cursor-pointer relative bg-white/95 text-slate-950 ${
+                            isSelected
+                              ? 'border-amber-500 ring-2 ring-amber-400 shadow-md shadow-amber-500/20'
+                              : 'border-slate-700 hover:border-slate-400 opacity-90 hover:opacity-100'
+                          }`}
+                          title={preset.description}
+                        >
+                          {isSelected && (
+                            <span className="absolute top-1 right-1 w-4 h-4 bg-amber-500 text-slate-950 rounded-full flex items-center justify-center text-[10px] font-bold">
+                              ✓
+                            </span>
+                          )}
+                          <img src={preset.svgDataUri} alt={preset.name} className="h-9 w-full object-contain pointer-events-none" />
+                          <div className="text-[10px] font-bold text-center text-slate-900 leading-tight">
+                            {preset.name}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Custom Upload & URL Input Row with Live Preview */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
+                  {/* Left 2 Cols: File Upload and URL */}
+                  <div className="md:col-span-2 space-y-2.5">
+                    <span className="text-[11px] font-semibold text-slate-300">
+                      Or Upload Custom Logo Image (PNG, JPG, SVG):
+                    </span>
+                    <div className="flex items-center gap-3">
+                      <label className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-900 hover:bg-slate-850 text-slate-200 border border-dashed border-slate-700 hover:border-amber-400 rounded-xl text-xs font-semibold transition cursor-pointer">
+                        <UploadCloud className="w-4 h-4 text-amber-400" />
+                        <span>Upload Logo from Computer</span>
+                        <input
+                          type="file"
+                          accept="image/png, image/jpeg, image/svg+xml, image/webp"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              const reader = new FileReader();
+                              reader.onload = (uploadEvent) => {
+                                setFormData({
+                                  ...formData,
+                                  logoUrl: uploadEvent.target?.result as string,
+                                  printBusinessLogo: true,
+                                });
+                              };
+                              reader.readAsDataURL(file);
+                            }
+                          }}
+                        />
+                      </label>
                     </div>
-                  ) : (
-                    <div className="w-16 h-16 rounded-xl border border-dashed border-slate-700 bg-slate-950/50 flex items-center justify-center text-slate-500 text-[10px] shrink-0">
-                      No Logo
+
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={formData.logoUrl || ''}
+                        onChange={(e) => setFormData({ ...formData, logoUrl: e.target.value })}
+                        placeholder="Or paste direct image URL (https://...)"
+                        className="w-full pl-3 pr-8 py-2 bg-slate-900 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:border-amber-400 focus:outline-none"
+                      />
+                      {formData.logoUrl && (
+                        <button
+                          type="button"
+                          onClick={() => setFormData({ ...formData, logoUrl: '' })}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-xs cursor-pointer"
+                        >
+                          ✕
+                        </button>
+                      )}
                     </div>
-                  )}
-                  <div className="flex-1 space-y-2">
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) {
-                          const reader = new FileReader();
-                          reader.onload = (uploadEvent) => {
-                            setFormData({ ...formData, logoUrl: uploadEvent.target?.result as string });
-                          };
-                          reader.readAsDataURL(file);
-                        }
-                      }}
-                      className="block w-full text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-amber-500 file:text-slate-950 hover:file:bg-amber-400 cursor-pointer"
-                    />
-                    <input
-                      type="text"
-                      value={formData.logoUrl || ''}
-                      onChange={(e) => setFormData({ ...formData, logoUrl: e.target.value })}
-                      placeholder="Or paste image URL (https://...)"
-                      className="w-full px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:border-amber-400 focus:outline-none"
-                    />
+                  </div>
+
+                  {/* Right Col: Live Thermal Receipt Header Preview */}
+                  <div className="p-3 bg-white text-slate-950 rounded-xl border border-slate-300 shadow-inner flex flex-col items-center justify-center text-center font-mono text-[10px] leading-tight space-y-1">
+                    <span className="text-[9px] uppercase tracking-wider font-sans font-bold text-slate-500 pb-0.5">
+                      Live Thermal Receipt Preview
+                    </span>
+                    {(formData.printBusinessLogo ?? true) && formData.logoUrl ? (
+                      <div className="max-h-10 max-w-[120px] flex items-center justify-center overflow-hidden my-0.5">
+                        <img src={formData.logoUrl} alt="Thermal Logo" className="max-h-9 max-w-[120px] object-contain" />
+                      </div>
+                    ) : (
+                      <div className="border border-black px-2 py-0.5 rounded font-black text-[9px] uppercase">
+                        ★ {formData.shopName || 'NEW SAJJAD ZARI'} ★
+                      </div>
+                    )}
+                    <div className="font-bold text-[11px] tracking-tight">{formData.shopName || 'Shop Name'}</div>
+                    {formData.urduTitle && <div className="font-urdu text-[10px]">{formData.urduTitle}</div>}
+                    <div className="text-[9px] text-slate-700 truncate max-w-[180px]">{formData.phone || '0300-4567890'}</div>
                   </div>
                 </div>
               </div>
@@ -320,6 +422,36 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           {activeSection === 'print' && (
             <div className="space-y-4">
+              {/* Print Business Logo Toggle */}
+              <div className="p-4 bg-slate-800/90 rounded-xl border border-slate-700 flex items-center justify-between gap-4 shadow-sm">
+                <div className="space-y-1">
+                  <div className="text-sm font-bold text-white flex items-center gap-2">
+                    <Store className="w-4 h-4 text-amber-400" />
+                    <span>Print Business Logo (رسید پر کاروباری لوگو)</span>
+                    <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
+                      Branding
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-300">
+                    Dynamically inject the shop emblem or custom company logo at the top of 80mm/58mm thermal receipts and wholesale tax invoices.
+                  </p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={formData.printBusinessLogo ?? true}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        printBusinessLogo: e.target.checked,
+                      })
+                    }
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500"></div>
+                </label>
+              </div>
+
               {/* Auto-Print on Sale Global Toggle */}
               <div className="p-4 bg-slate-800/90 rounded-xl border border-slate-700 flex items-center justify-between gap-4 shadow-sm">
                 <div className="space-y-1">

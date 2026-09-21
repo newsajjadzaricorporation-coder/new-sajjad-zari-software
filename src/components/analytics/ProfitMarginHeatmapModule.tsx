@@ -68,8 +68,21 @@ const ProfitMarginHeatmapModuleComponent: React.FC<ProfitMarginHeatmapModuleProp
     }
   };
 
-  // Compute margins for all products
+  // Compute margins for all products with O(M + N) optimized lookup
   const productMargins = useMemo(() => {
+    const salesUnitsMap = new Map<string, number>();
+    for (let i = 0; i < sales.length; i++) {
+      const s = sales[i];
+      if (!s.items) continue;
+      for (let j = 0; j < s.items.length; j++) {
+        const item = s.items[j];
+        if (item && item.product) {
+          const pId = item.product.id;
+          salesUnitsMap.set(pId, (salesUnitsMap.get(pId) || 0) + (item.quantity || 0));
+        }
+      }
+    }
+
     return products.map((p) => {
       const cost = p.costPrice || 0;
       const selling = p.sellingPrice;
@@ -77,13 +90,7 @@ const ProfitMarginHeatmapModuleComponent: React.FC<ProfitMarginHeatmapModuleProp
       const marginPct = selling > 0 ? Math.round((profitRs / selling) * 100) : 0;
       const isLoss = selling < cost;
 
-      // Calculate recent 30-day sales velocity
-      const totalUnitsSold = sales.reduce((acc, s) => {
-        const item = s.items.find((i) => i.product.id === p.id);
-        return acc + (item ? item.quantity : 0);
-      }, 0);
-
-      // Estimate runout days
+      const totalUnitsSold = salesUnitsMap.get(p.id) || 0;
       const dailyVelocity = Math.max(0.1, totalUnitsSold / 30);
       const daysUntilStockout = Math.round(p.stock / dailyVelocity);
 
@@ -159,11 +166,11 @@ const ProfitMarginHeatmapModuleComponent: React.FC<ProfitMarginHeatmapModuleProp
     }));
   }, [displayItems]);
 
-  const pieData = [
+  const pieData = useMemo(() => [
     { name: 'High Margin (≥25%)', value: analyticsSummary.highCount, color: '#10b981' },
     { name: 'Moderate (5-24%)', value: analyticsSummary.moderateCount, color: '#f59e0b' },
     { name: 'Loss / Below Cost', value: analyticsSummary.lossCount, color: '#ef4444' },
-  ].filter((d) => d.value > 0);
+  ].filter((d) => d.value > 0), [analyticsSummary.highCount, analyticsSummary.moderateCount, analyticsSummary.lossCount]);
 
   // 7-day sales and revenue performance trend line chart data
   const weeklyRevenueTrend = useMemo(() => {

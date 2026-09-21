@@ -13,9 +13,12 @@ import {
   CheckCircle2,
   Building2,
   Clock,
+  Download,
+  FileCheck,
 } from 'lucide-react';
 import { SaleInvoice, ExpenseItem, DailyClosingReport, ShopSettings, UserProfile } from '../../types';
 import { OfflineDB } from '../../services/db';
+import { generateDailyClosingReportPDF } from '../../utils/pdfReport';
 
 interface DayEndSummaryModalProps {
   isOpen: boolean;
@@ -39,6 +42,8 @@ export const DayEndSummaryModal: React.FC<DayEndSummaryModalProps> = ({
   currentUser,
 }) => {
   const [printLayout, setPrintLayout] = useState<'thermal80' | 'a4'>('thermal80');
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [pdfExportSuccess, setPdfExportSuccess] = useState(false);
 
   // Filter sales for the chosen day
   const daySales = useMemo(() => {
@@ -125,14 +130,8 @@ export const DayEndSummaryModal: React.FC<DayEndSummaryModalProps> = ({
   const netDayProfit = grossProfit - totalExpenses;
 
   // Cash Drawer Expected Balance
-  const openingFloat = 15000;
+  const openingFloat = closingReport?.openingCash || 15000;
   const expectedDrawerCash = openingFloat + cashSales + udhaarCashWasooli - cashExpenses;
-
-  if (!isOpen) return null;
-
-  const handlePrint = () => {
-    window.print();
-  };
 
   const formattedDate = new Date(selectedDate).toLocaleDateString('en-US', {
     weekday: 'long',
@@ -140,6 +139,58 @@ export const DayEndSummaryModal: React.FC<DayEndSummaryModalProps> = ({
     month: 'long',
     day: 'numeric',
   });
+
+  const handlePrint = () => {
+    window.print();
+  };
+
+  const handleExportPDF = () => {
+    setIsExportingPdf(true);
+    try {
+      generateDailyClosingReportPDF({
+        reportDate: selectedDate,
+        formattedDateStr: formattedDate,
+        closingReport,
+        currentUser,
+        settings,
+        sales: daySales,
+        expenses: dayExpenses,
+        customerPayments: dayCustomerPayments,
+        summary: {
+          totalInvoices,
+          grossSales,
+          totalDiscounts,
+          netSales,
+          avgBasketSize,
+          cashSales,
+          cardSales,
+          creditSales,
+          udhaarCashWasooli,
+          udhaarBankWasooli,
+          totalExpenses,
+          cashExpenses,
+          bankExpenses,
+          totalCOGS,
+          grossProfit,
+          grossMarginPercent,
+          netDayProfit,
+          openingFloat,
+          expectedDrawerCash,
+          actualCountedCash: closingReport?.actualCash,
+          discrepancy: closingReport?.discrepancy,
+          expensesByCategory,
+        },
+      });
+      setPdfExportSuccess(true);
+      setTimeout(() => setPdfExportSuccess(false), 4000);
+    } catch (err) {
+      console.error('Failed to generate closing PDF report:', err);
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 overflow-y-auto animate-in fade-in duration-200">
@@ -207,6 +258,19 @@ export const DayEndSummaryModal: React.FC<DayEndSummaryModalProps> = ({
             >
               {/* Slip Header */}
               <div className="text-center border-b border-dashed border-black pb-3 mb-3">
+                {(settings.printBusinessLogo ?? true) && (
+                  settings.logoUrl ? (
+                    <div className="flex justify-center mb-1">
+                      <img src={settings.logoUrl} alt="Logo" className="max-h-12 max-w-[120px] object-contain mx-auto" />
+                    </div>
+                  ) : (
+                    <div className="flex justify-center mb-1">
+                      <div className="inline-flex flex-col items-center justify-center border border-black px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider leading-tight">
+                        <span>★ NEW SAJJAD ZARI ★</span>
+                      </div>
+                    </div>
+                  )
+                )}
                 <h1 className="text-sm font-black uppercase tracking-wider">{settings.shopName}</h1>
                 <p className="text-[10px] text-gray-700 leading-tight mt-0.5">{settings.address}</p>
                 <p className="text-[10px] text-gray-700">Phone: {settings.phone}</p>
@@ -475,25 +539,45 @@ export const DayEndSummaryModal: React.FC<DayEndSummaryModalProps> = ({
         </div>
 
         {/* Footer Actions */}
-        <div className="flex items-center justify-between px-6 py-4 border-t border-slate-800 bg-slate-950/70 shrink-0">
-          <div className="text-xs text-slate-400 flex items-center gap-1.5">
-            <ShieldCheck className="w-4 h-4 text-emerald-400" />
-            <span>Official Z-Report Record • Indexed in Local Audit Database</span>
+        <div className="flex flex-wrap items-center justify-between px-6 py-4 border-t border-slate-800 bg-slate-950/70 gap-3 shrink-0">
+          <div className="text-xs text-slate-400 flex items-center gap-2">
+            {pdfExportSuccess ? (
+              <span className="flex items-center gap-1.5 text-emerald-400 font-bold animate-in fade-in">
+                <CheckCircle2 className="w-4 h-4" />
+                <span>PDF Archived & Downloaded Successfully!</span>
+              </span>
+            ) : (
+              <span className="flex items-center gap-1.5">
+                <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                <span>Official Z-Report Record • Indexed in Local Audit Database</span>
+              </span>
+            )}
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5">
             <button
               onClick={onClose}
-              className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold transition"
+              className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold transition cursor-pointer"
             >
               Close
             </button>
             <button
+              type="button"
+              onClick={handleExportPDF}
+              disabled={isExportingPdf}
+              className="flex items-center gap-2 px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-amber-400 border border-amber-500/30 hover:border-amber-400 rounded-xl text-xs font-bold transition shadow cursor-pointer"
+              title="Export complete Day End Closing Z-Report as a formatted A4 PDF for archival"
+            >
+              <Download className={`w-4 h-4 ${isExportingPdf ? 'animate-bounce' : ''}`} />
+              <span>{isExportingPdf ? 'Generating PDF...' : 'Export PDF (PDF محفوظ کریں)'}</span>
+            </button>
+            <button
+              type="button"
               onClick={handlePrint}
-              className="flex items-center gap-2 px-5 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-xl text-xs font-bold transition shadow-lg shadow-amber-500/20"
+              className="flex items-center gap-2 px-5 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-xl text-xs font-bold transition shadow-lg shadow-amber-500/20 cursor-pointer"
             >
               <Printer className="w-4 h-4" />
-              <span>Print Day End Summary</span>
+              <span>Print {printLayout === 'thermal80' ? '80mm Slip' : 'A4 Statement'}</span>
             </button>
           </div>
         </div>

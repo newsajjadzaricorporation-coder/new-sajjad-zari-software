@@ -1126,8 +1126,24 @@ export const QuickStatsDashboard: React.FC<QuickStatsDashboardProps> = ({
                     </span>
                   </div>
 
+                  {/* Mini Real-Time Profit Trend Line Chart */}
+                  <div className="h-12 w-full my-2 pt-1">
+                    <div className="text-[10px] text-slate-400 mb-0.5 flex justify-between">
+                      <span>7-Day P/L Trend</span>
+                      <span className="text-emerald-400 font-mono font-bold">Live</span>
+                    </div>
+                    <div className="h-9 w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={last7DaysData} margin={{ top: 2, right: 4, left: -28, bottom: 0 }}>
+                          <Line type="monotone" dataKey="profit" stroke="#34d399" strokeWidth={2} dot={false} isAnimationActive={false} />
+                          <Tooltip content={() => null} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
                   {/* COGS and Sales breakdown */}
-                  <div className="mt-2.5 pt-2 border-t border-slate-800/80 space-y-1.5 text-xs">
+                  <div className="mt-1 pt-2 border-t border-slate-800/80 space-y-1.5 text-xs">
                     <div className="flex items-center justify-between">
                       <span className="text-slate-400">Today's Sales:</span>
                       <span className="font-bold text-white">

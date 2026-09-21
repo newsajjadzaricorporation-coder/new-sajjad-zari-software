@@ -10,7 +10,7 @@ interface SwipeableCartItemProps {
   onUpdateUnitPrice: (productId: string, price: number) => void;
 }
 
-export const SwipeableCartItem: React.FC<SwipeableCartItemProps> = ({
+export const SwipeableCartItem: React.FC<SwipeableCartItemProps> = React.memo(({
   item,
   onRemove,
   onUpdateQuantity,
@@ -158,4 +158,4 @@ export const SwipeableCartItem: React.FC<SwipeableCartItemProps> = ({
       </motion.div>
     </div>
   );
-};
+});

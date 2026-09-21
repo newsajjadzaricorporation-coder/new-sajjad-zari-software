@@ -6,6 +6,8 @@ export const DEFAULT_SETTINGS: ShopSettings = {
   tagline: 'Wholesale & Retail Embroidered Zari, Borders, Fancy Threads & Accessories',
   phone: '0300-4567890 / 042-37654321',
   address: 'Shop # 14-16, Madina Zari Market, Shah Alam, Lahore, Pakistan',
+  logoUrl: '',
+  printBusinessLogo: true,
   thermalHeaderNote: 'NTN: 4129845-2 | Retail & Wholesale Zari Specialists',
   thermalFooterUrdu: 'مال کی واپسی یا تبدیلی 7 دن کے اندر بل کے ساتھ ممکن ہے',
   customReceiptFooter: 'Store Hours: 10:00 AM - 10:00 PM • Exchange within 7 days with original receipt',

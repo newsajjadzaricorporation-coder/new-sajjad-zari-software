@@ -27,7 +27,7 @@ interface ManualSearchModalProps {
   onLinkBarcodeAndAdd?: (product: Product, barcode: string) => void;
 }
 
-export const ManualSearchModal: React.FC<ManualSearchModalProps> = ({
+export const ManualSearchModal: React.FC<ManualSearchModalProps> = React.memo(({
   isOpen,
   onClose,
   onSelectProduct,
@@ -446,4 +446,4 @@ export const ManualSearchModal: React.FC<ManualSearchModalProps> = ({
       </div>
     </div>
   );
-};
+});

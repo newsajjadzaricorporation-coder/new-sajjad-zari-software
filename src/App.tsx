@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, Suspense, lazy } from 'react';
 import {
   ShoppingBag,
   Package,
@@ -23,10 +23,7 @@ import { InventoryModule } from './components/inventory/InventoryModule';
 import { ProfitMarginHeatmapModule } from './components/analytics/ProfitMarginHeatmapModule';
 import { CustomerKhataModule } from './components/khata/CustomerKhataModule';
 import { SupplierKhataModule } from './components/khata/SupplierKhataModule';
-import { ReturnsModule } from './components/returns/ReturnsModule';
 import { ExpensesClosingModule } from './components/expenses/ExpensesClosingModule';
-import { SecurityAuditModule } from './components/admin/SecurityAuditModule';
-import { UserGuideModule } from './components/guide/UserGuideModule';
 import { PrintReceiptModal } from './components/PrintReceiptModal';
 import { SettingsModal } from './components/SettingsModal';
 import { SplashScreen } from './components/SplashScreen';
@@ -34,6 +31,12 @@ import { QuickStatsDashboard } from './components/dashboard/QuickStatsDashboard'
 import { useApp } from './context/AppProvider';
 import { useLanguage } from './context/LanguageContext';
 import { SyncReconciliationFailureModal } from './components/common/SyncReconciliationFailureModal';
+import { PersistentSyncAlertToast } from './components/common/PersistentSyncAlertToast';
+
+// Lazy-loaded secondary modules to reduce initial JS bundle size
+const ReturnsModule = lazy(() => import('./components/returns/ReturnsModule').then(m => ({ default: m.ReturnsModule })));
+const SecurityAuditModule = lazy(() => import('./components/admin/SecurityAuditModule').then(m => ({ default: m.SecurityAuditModule })));
+const UserGuideModule = lazy(() => import('./components/guide/UserGuideModule').then(m => ({ default: m.UserGuideModule })));
 
 type NavTab =
   | 'pos'
@@ -134,11 +137,36 @@ export default function App() {
   const [isLocked, setIsLocked] = useState<boolean>(OfflineDB.isSessionLocked());
   const [isLoginModalOpen, setIsLoginModalOpen] = useState<boolean>(OfflineDB.isSessionLocked());
 
-  // Core Data Collections
-  const [products, setProducts] = useState<Product[]>(OfflineDB.getProducts());
-  const [customers, setCustomers] = useState<Customer[]>(OfflineDB.getCustomers());
-  const [suppliers, setSuppliers] = useState<Supplier[]>(OfflineDB.getSuppliers());
-  const [sales, setSales] = useState<SaleInvoice[]>(OfflineDB.getSales());
+  // Core Data Collections & Hydration State
+  const [isDataHydrated, setIsDataHydrated] = useState(false);
+  const [products, setProducts] = useState<Product[]>(() => OfflineDB.getProducts());
+  const [customers, setCustomers] = useState<Customer[]>(() => OfflineDB.getCustomers());
+  const [suppliers, setSuppliers] = useState<Supplier[]>(() => OfflineDB.getSuppliers());
+  const [sales, setSales] = useState<SaleInvoice[]>(() => OfflineDB.getSales());
+
+  // Explicit collection hydration verification to prevent screen flickering
+  useEffect(() => {
+    try {
+      OfflineDB.initDatabase();
+      const p = OfflineDB.getProducts();
+      const s = OfflineDB.getSettings();
+      const c = OfflineDB.getCustomers();
+      const sup = OfflineDB.getSuppliers();
+      const sal = OfflineDB.getSales();
+      const u = OfflineDB.getUsers();
+
+      setProducts(p);
+      setSettings(s);
+      setCustomers(c);
+      setSuppliers(sup);
+      setSales(sal);
+      setAllUsers(u);
+      setIsDataHydrated(true);
+    } catch (err) {
+      console.warn('[App Hydration] Hydration notice:', err);
+      setIsDataHydrated(true);
+    }
+  }, []);
 
   // Receipt & Settings Modal State
   const [printModalSale, setPrintModalSale] = useState<SaleInvoice | null>(null);
@@ -317,11 +345,18 @@ export default function App() {
     OfflineDB.recordSale(sale, currentUser.email);
     reloadData();
 
-    // If Auto-Print on Sale is enabled, bypass confirmation dialog and automatically trigger print
+    // If Auto-Print on Sale is enabled, attempt print with fallback recovery
     const isAutoPrint = Boolean(settings.autoPrintOnSale || settings.autoPrintReceipt);
     if (isAutoPrint) {
       setTimeout(() => {
-        window.print();
+        try {
+          window.print();
+        } catch (err) {
+          console.error('Auto-print sequence failed:', err);
+          // Force-open PrintReceiptModal with error notification for user recovery
+          setPrintModalSale(sale);
+          setIsPrintModalOpen(true);
+        }
       }, 350);
       setIsPrintModalOpen(false);
     } else {
@@ -343,7 +378,7 @@ export default function App() {
     });
   }, []);
 
-  if (isInitializing) {
+  if (isInitializing || !isDataHydrated) {
     return <SplashScreen statusMessage="Synchronizing local databases & multi-tab cache..." />;
   }
 
@@ -561,12 +596,14 @@ export default function App() {
           )}
 
           {activeTab === 'returns' && (
-            <ReturnsModule
-              sales={sales}
-              currentUser={currentUser}
-              settings={settings}
-              onRefreshSales={reloadData}
-            />
+            <Suspense fallback={<div className="p-8 text-center text-amber-400 font-bold text-sm">Loading Returns & Claims Engine...</div>}>
+              <ReturnsModule
+                sales={sales}
+                currentUser={currentUser}
+                settings={settings}
+                onRefreshSales={reloadData}
+              />
+            </Suspense>
           )}
 
           {activeTab === 'expenses' && (
@@ -579,16 +616,25 @@ export default function App() {
           )}
 
           {activeTab === 'audit' && (
-            <SecurityAuditModule
-              currentUser={currentUser}
-              allUsers={allUsers}
-              onRefreshAll={reloadData}
-            />
+            <Suspense fallback={<div className="p-8 text-center text-amber-400 font-bold text-sm">Loading Security Audit Module...</div>}>
+              <SecurityAuditModule
+                currentUser={currentUser}
+                allUsers={allUsers}
+                onRefreshAll={reloadData}
+              />
+            </Suspense>
           )}
 
-          {activeTab === 'guide' && <UserGuideModule />}
+          {activeTab === 'guide' && (
+            <Suspense fallback={<div className="p-8 text-center text-amber-400 font-bold text-sm">Loading User Manual & Guide...</div>}>
+              <UserGuideModule />
+            </Suspense>
+          )}
         </div>
       </main>
+
+      {/* Global Persistent Sync Alert Toast */}
+      <PersistentSyncAlertToast />
 
       {/* Global Thermal & A4 Receipt Print Modal */}
       <PrintReceiptModal
