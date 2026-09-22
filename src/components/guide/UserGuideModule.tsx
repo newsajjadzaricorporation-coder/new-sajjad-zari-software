@@ -12,15 +12,18 @@ import {
   WifiOff,
 } from 'lucide-react';
 import { usePWAInstall } from '../../hooks/usePWAInstall';
+import { copyToClipboard } from '../../utils/clipboard';
 
 export const UserGuideModule: React.FC = () => {
   const [copiedSection, setCopiedSection] = useState<string | null>(null);
   const { isInstallable, install } = usePWAInstall();
 
-  const handleCopy = (text: string, key: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedSection(key);
-    setTimeout(() => setCopiedSection(null), 2500);
+  const handleCopy = async (text: string, key: string) => {
+    const success = await copyToClipboard(text);
+    if (success) {
+      setCopiedSection(key);
+      setTimeout(() => setCopiedSection(null), 2500);
+    }
   };
 
   const electronJsCode = `// electron.js - New Sajjad Zari POS Desktop Main Process

@@ -11,6 +11,8 @@ import {
 } from 'lucide-react';
 import { OfflineDB } from '../services/db';
 
+import { copyToClipboard } from '../utils/clipboard';
+
 interface ErrorBoundaryProps {
   children: ReactNode;
   fallbackTitle?: string;
@@ -105,13 +107,15 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
     }
   };
 
-  handleCopyReport = () => {
+  handleCopyReport = async () => {
     if (this.state.diagnosticPayload) {
-      navigator.clipboard.writeText(this.state.diagnosticPayload);
-      this.setState({ copied: true });
-      setTimeout(() => {
-        this.setState({ copied: false });
-      }, 2500);
+      const success = await copyToClipboard(this.state.diagnosticPayload);
+      if (success) {
+        this.setState({ copied: true });
+        setTimeout(() => {
+          this.setState({ copied: false });
+        }, 2500);
+      }
     }
   };
 
