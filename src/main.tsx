@@ -1,5 +1,6 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { registerSW } from 'virtual:pwa-register';
 import App from './App.tsx';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { AppProvider } from './context/AppProvider';
@@ -9,6 +10,22 @@ import './index.css';
 
 // Startup logging and global rejection safety
 console.info('[Init] New Sajjad Zari Corporation starting...');
+
+// Register Service Worker for offline-first capability
+if (typeof window !== 'undefined') {
+  registerSW({
+    immediate: true,
+    onNeedRefresh() {
+      console.info('[PWA] New version detected. Auto-updating service worker cache...');
+    },
+    onOfflineReady() {
+      console.info('[PWA] Service Worker active: Application ready for offline-first operation.');
+    },
+    onRegisterError(error) {
+      console.warn('[PWA] Service Worker registration failed:', error);
+    },
+  });
+}
 
 if (typeof window !== 'undefined') {
   window.addEventListener('unhandledrejection', (event) => {
