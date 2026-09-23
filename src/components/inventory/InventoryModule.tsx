@@ -26,8 +26,9 @@ import {
   FileDown,
   Sparkles,
   Percent,
+  Calendar,
 } from 'lucide-react';
-import { Product, UserProfile, UnitType } from '../../types';
+import { Product, UserProfile, UnitType, SaleInvoice } from '../../types';
 import {
   ResponsiveContainer,
   BarChart,
@@ -43,6 +44,8 @@ import { CSVBulkImportModal } from './CSVBulkImportModal';
 import { BulkUpdateModal } from './BulkUpdateModal';
 import { SuggestCategoriesModal } from './SuggestCategoriesModal';
 import { InventoryProductRow } from './InventoryProductRow';
+import { InventoryForecastingModule } from './InventoryForecastingModule';
+import { ProductEditModal } from './ProductEditModal';
 import { PaginationControls } from '../common/PaginationControls';
 import { TableSkeleton } from '../common/SkeletonLoaders';
 import { exportToCSV } from '../../utils/csvExport';
@@ -118,12 +121,14 @@ interface InventoryModuleProps {
   products: Product[];
   currentUser: UserProfile;
   onRefreshProducts: () => void;
+  sales?: SaleInvoice[];
 }
 
 const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
   products,
   currentUser,
   onRefreshProducts,
+  sales,
 }) => {
   const isAdmin = currentUser.role === 'admin';
   const [searchQuery, setSearchQuery] = useState('');
@@ -202,28 +207,31 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
   }, [products]);
 
   // Predictive Stock Reorder Suggestion Engine Controls & Calculations
-  const [activeInventoryTab, setActiveInventoryTab] = useState<'catalog' | 'reorder_engine'>('catalog');
+  const [activeInventoryTab, setActiveInventoryTab] = useState<'catalog' | 'forecasting' | 'reorder_engine'>('catalog');
   const [targetBufferDays, setTargetBufferDays] = useState<number>(30);
   const [reorderUrgencyFilter, setReorderUrgencyFilter] = useState<'all' | 'urgent' | 'low'>('all');
 
-  const reorderSuggestions = useMemo(() => {
-    const sales = OfflineDB.getSales();
+  const sales30DaysMap = useMemo(() => {
+    const list = sales || OfflineDB.getSales();
     const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
-
-    // Aggregate sales by productId past 30 days
-    const sales30DaysMap = new Map<string, number>();
-    sales.forEach((s) => {
+    const map = new Map<string, number>();
+    for (let i = 0; i < list.length; i++) {
+      const s = list[i];
       const saleTs = s.timestamp || (s.date ? new Date(s.date).getTime() : 0);
       if (saleTs >= thirtyDaysAgo && s.items) {
-        s.items.forEach((item) => {
+        for (let j = 0; j < s.items.length; j++) {
+          const item = s.items[j];
           if (item.product?.id) {
             const qty = Number(item.quantity) || 0;
-            sales30DaysMap.set(item.product.id, (sales30DaysMap.get(item.product.id) || 0) + qty);
+            map.set(item.product.id, (map.get(item.product.id) || 0) + qty);
           }
-        });
+        }
       }
-    });
+    }
+    return map;
+  }, [sales]);
 
+  const reorderSuggestions = useMemo(() => {
     return products.map((p) => {
       const unitsSold30Days = sales30DaysMap.get(p.id) || 0;
       const dailyVelocity = parseFloat((unitsSold30Days / 30).toFixed(2));
@@ -466,24 +474,23 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
   }, []);
 
   // Save Product
-  const handleSaveProduct = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingProduct || !editingProduct.name || !editingProduct.sku) return;
+  const handleSaveProduct = useCallback((productData: Partial<Product>) => {
+    if (!productData || !productData.name || !productData.sku) return;
 
     const fullProduct: Product = {
-      id: editingProduct.id || `prod-${Date.now()}`,
-      name: editingProduct.name,
-      urduName: editingProduct.urduName || '',
-      category: editingProduct.category || 'General',
-      sku: editingProduct.sku,
-      barcode: editingProduct.barcode || editingProduct.sku,
-      costPrice: Number(editingProduct.costPrice) || 0,
-      sellingPrice: Number(editingProduct.sellingPrice) || 0,
-      stock: Number(editingProduct.stock) || 0,
-      minStockAlert: Number(editingProduct.minStockAlert) || 10,
-      unit: (editingProduct.unit as UnitType) || 'piece',
-      notes: editingProduct.notes || '',
-      createdAt: editingProduct.createdAt || new Date().toISOString(),
+      id: productData.id || `prod-${Date.now()}`,
+      name: productData.name.trim(),
+      urduName: productData.urduName?.trim() || '',
+      category: productData.category?.trim() || 'General',
+      sku: productData.sku.trim(),
+      barcode: productData.barcode?.trim() || productData.sku.trim(),
+      costPrice: Number(productData.costPrice) || 0,
+      sellingPrice: Number(productData.sellingPrice) || 0,
+      stock: Number(productData.stock) || 0,
+      minStockAlert: Number(productData.minStockAlert) || 10,
+      unit: (productData.unit as UnitType) || 'piece',
+      notes: productData.notes?.trim() || '',
+      createdAt: productData.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
 
@@ -491,7 +498,7 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
     setIsEditModalOpen(false);
     setEditingProduct(null);
     onRefreshProducts();
-  };
+  }, [currentUser.email, onRefreshProducts]);
 
   // Delete Product with custom in-app confirmation
   const handleDeleteProduct = useCallback((product: Product) => {
@@ -963,9 +970,9 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
               <button
                 type="button"
                 onClick={() => setActiveInventoryTab('catalog')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
                   activeInventoryTab === 'catalog'
-                    ? 'bg-amber-500 text-slate-950 shadow-sm'
+                    ? 'bg-amber-500 text-slate-950 shadow-sm font-black'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
@@ -975,10 +982,30 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
 
               <button
                 type="button"
+                onClick={() => setActiveInventoryTab('forecasting')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
+                  activeInventoryTab === 'forecasting'
+                    ? 'bg-amber-500 text-slate-950 shadow-sm font-black'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                <Calendar className="w-3.5 h-3.5" />
+                <span>Inventory Forecasting</span>
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold ${
+                  activeInventoryTab === 'forecasting'
+                    ? 'bg-slate-950 text-amber-400'
+                    : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                }`}>
+                  ROP
+                </span>
+              </button>
+
+              <button
+                type="button"
                 onClick={() => setActiveInventoryTab('reorder_engine')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
                   activeInventoryTab === 'reorder_engine'
-                    ? 'bg-amber-500 text-slate-950 shadow-sm'
+                    ? 'bg-amber-500 text-slate-950 shadow-sm font-black'
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
@@ -1057,7 +1084,10 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
         </div>
       </div>
 
-      {activeInventoryTab === 'reorder_engine' ? (
+      {activeInventoryTab === 'forecasting' ? (
+        /* ================= INVENTORY FORECASTING & STOCK-OUT PROJECTIONS ================= */
+        <InventoryForecastingModule products={products} sales={sales} />
+      ) : activeInventoryTab === 'reorder_engine' ? (
         /* ================= PREDICTIVE STOCK REORDER ENGINE VIEW ================= */
         <div className="space-y-6">
           {/* Controls Bar */}
@@ -1748,201 +1778,24 @@ const InventoryModuleComponent: React.FC<InventoryModuleProps> = ({
       )}
 
       {/* ================= ADD / EDIT PRODUCT MODAL ================= */}
-      {isEditModalOpen && editingProduct && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 overflow-y-auto">
-          <div className="relative w-full max-w-lg bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl p-6 my-6">
-            <div className="flex items-center justify-between pb-4 border-b border-slate-800">
-              <h3 className="text-lg font-bold text-white">
-                {editingProduct.id?.startsWith('prod-') && !editingProduct.createdAt
-                  ? 'Add New Zari Product'
-                  : 'Edit Product Details'}
-              </h3>
-              <button
-                onClick={() => setIsEditModalOpen(false)}
-                className="text-slate-400 hover:text-white"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveProduct} className="space-y-4 pt-4 text-xs">
-              <div>
-                <label className="block text-slate-400 font-semibold mb-1">Product Name (English) *</label>
-                <input
-                  type="text"
-                  required
-                  value={editingProduct.name || ''}
-                  onChange={(e) => setEditingProduct({ ...editingProduct, name: e.target.value })}
-                  placeholder="e.g. Pure Gold Tilla Reel"
-                  className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-sm text-white focus:outline-none focus:border-amber-400"
-                />
-              </div>
-
-              <div>
-                <label className="block text-slate-400 font-semibold mb-1">Product Urdu Title (اردو نام)</label>
-                <input
-                  type="text"
-                  value={editingProduct.urduName || ''}
-                  onChange={(e) => setEditingProduct({ ...editingProduct, urduName: e.target.value })}
-                  placeholder="مثال: خالص گولڈ تلہ ریل"
-                  className="w-full font-urdu bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-sm text-amber-300 focus:outline-none focus:border-amber-400"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-slate-400 font-semibold mb-1">Category</label>
-                  <input
-                    type="text"
-                    value={editingProduct.category || ''}
-                    onChange={(e) => setEditingProduct({ ...editingProduct, category: e.target.value })}
-                    placeholder="e.g. Zari & Tilla Threads"
-                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-white focus:outline-none focus:border-amber-400"
-                  />
-                </div>
-                <div>
-                  <label className="block text-slate-400 font-semibold mb-1">Unit of Measure</label>
-                  <select
-                    aria-label="Unit of Measure"
-                    value={editingProduct.unit || 'piece'}
-                    onChange={(e) => setEditingProduct({ ...editingProduct, unit: e.target.value as UnitType })}
-                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-white focus:outline-none focus:border-amber-400"
-                  >
-                    <option value="meter">Meter</option>
-                    <option value="yard">Yard (Ghaz)</option>
-                    <option value="roll">Roll / Reel</option>
-                    <option value="piece">Piece (Thaan)</option>
-                    <option value="packet">Packet</option>
-                    <option value="dozen">Dozen</option>
-                    <option value="box">Box</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-slate-400 font-semibold mb-1">SKU / Item Code *</label>
-                  <input
-                    type="text"
-                    required
-                    value={editingProduct.sku || ''}
-                    onChange={(e) => setEditingProduct({ ...editingProduct, sku: e.target.value })}
-                    className="w-full font-mono bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-white focus:outline-none focus:border-amber-400"
-                  />
-                </div>
-                <div>
-                  <label className="block text-slate-400 font-semibold mb-1">Barcode</label>
-                  <input
-                    type="text"
-                    value={editingProduct.barcode || ''}
-                    onChange={(e) => setEditingProduct({ ...editingProduct, barcode: e.target.value })}
-                    className="w-full font-mono bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-white focus:outline-none focus:border-amber-400"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-slate-400 font-semibold mb-1">
-                    Purchase Cost Price (Rs) {isAdmin ? '' : '(Hidden)'}
-                  </label>
-                  <input
-                    type="number"
-                    disabled={!isAdmin}
-                    value={editingProduct.costPrice ?? 0}
-                    onChange={(e) =>
-                      setEditingProduct({ ...editingProduct, costPrice: parseFloat(e.target.value) || 0 })
-                    }
-                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-white focus:outline-none focus:border-amber-400 disabled:opacity-50"
-                  />
-                </div>
-                <div>
-                  <label className="block text-slate-400 font-semibold mb-1">Selling Price (Rs) *</label>
-                  <input
-                    type="number"
-                    required
-                    value={editingProduct.sellingPrice ?? 0}
-                    onChange={(e) =>
-                      setEditingProduct({ ...editingProduct, sellingPrice: parseFloat(e.target.value) || 0 })
-                    }
-                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 font-bold text-amber-400 focus:outline-none focus:border-amber-400"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-slate-400 font-semibold mb-1">Current Stock Qty</label>
-                  <input
-                    type="number"
-                    value={editingProduct.stock ?? 0}
-                    onChange={(e) =>
-                      setEditingProduct({ ...editingProduct, stock: parseFloat(e.target.value) || 0 })
-                    }
-                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-white focus:outline-none focus:border-amber-400"
-                  />
-                </div>
-                <div>
-                  <label className="block text-slate-400 font-semibold mb-1">Low-Stock Alert Level</label>
-                  <input
-                    type="number"
-                    value={editingProduct.minStockAlert ?? 10}
-                    onChange={(e) =>
-                      setEditingProduct({ ...editingProduct, minStockAlert: parseFloat(e.target.value) || 10 })
-                    }
-                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-white focus:outline-none focus:border-amber-400"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-slate-400 font-semibold mb-1">Notes / Specifications</label>
-                <textarea
-                  rows={2}
-                  value={editingProduct.notes || ''}
-                  onChange={(e) => setEditingProduct({ ...editingProduct, notes: e.target.value })}
-                  placeholder="Material specs, manufacturer, origin, etc."
-                  className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-white focus:outline-none focus:border-amber-400"
-                />
-              </div>
-
-              <div className="flex items-center justify-between gap-2 pt-4 border-t border-slate-800">
-                {editingProduct && editingProduct.id && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const prod = products.find((p) => p.id === editingProduct.id);
-                      if (prod) {
-                        setProductToDelete(prod);
-                      }
-                    }}
-                    className="px-3.5 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
-                    title="Permanently remove this product from inventory"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    Delete Product
-                  </button>
-                )}
-                <div className="flex items-center gap-2 ml-auto">
-                  <button
-                    type="button"
-                    onClick={() => setIsEditModalOpen(false)}
-                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-xl shadow-lg shadow-amber-500/20 text-xs cursor-pointer"
-                  >
-                    Save Product
-                  </button>
-                </div>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <ProductEditModal
+        isOpen={isEditModalOpen}
+        onClose={() => {
+          setIsEditModalOpen(false);
+          setEditingProduct(null);
+        }}
+        product={editingProduct}
+        isAdmin={isAdmin}
+        onSave={handleSaveProduct}
+        onDelete={() => {
+          if (editingProduct && editingProduct.id) {
+            const prod = products.find((p) => p.id === editingProduct.id);
+            if (prod) {
+              setProductToDelete(prod);
+            }
+          }
+        }}
+      />
 
       {/* ================= CSV BULK IMPORT MODAL WITH PRE-COMMIT VALIDATION ================= */}
       <CSVBulkImportModal

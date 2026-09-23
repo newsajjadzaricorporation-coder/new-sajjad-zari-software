@@ -105,6 +105,21 @@ export const Header: React.FC<HeaderProps> = ({
     });
   }, [lastSyncTime]);
 
+  // Visual calculation for Firestore background sync queue & progress
+  const syncProgressPercent = useMemo(() => {
+    if (isSyncInProgress) {
+      return 85;
+    }
+    if (!isOnline) {
+      if (pendingRecordsCount === 0) return 100;
+      return Math.max(15, Math.min(85, 100 - pendingRecordsCount * 12));
+    }
+    if (pendingRecordsCount > 0) {
+      return Math.max(20, Math.min(90, 100 - pendingRecordsCount * 15));
+    }
+    return 100;
+  }, [isSyncInProgress, isOnline, pendingRecordsCount]);
+
   return (
     <header className="sticky top-0 z-30 bg-slate-950/90 backdrop-blur-md border-b border-slate-800">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -128,6 +143,76 @@ export const Header: React.FC<HeaderProps> = ({
               </p>
             </div>
           </div>
+
+          {/* Firestore Background Sync Progress Bar & Queue Status Widget */}
+          <motion.div
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            onClick={() => setShowDiagnostics(true)}
+            className="hidden md:flex flex-col justify-center px-3 py-1.5 rounded-xl bg-slate-900/90 border border-slate-800/80 hover:border-amber-500/40 transition cursor-pointer group min-w-[190px] max-w-[260px] shadow-sm"
+            title={`Firebase Firestore Sync Status: ${
+              isSyncInProgress
+                ? 'Actively synchronizing background queue to Firestore...'
+                : !isOnline
+                ? `Offline mode: ${pendingRecordsCount} operations queued locally`
+                : `100% Synced: Local database matches Firebase Firestore (${formattedSyncTime || 'Active'})`
+            } • Click for Diagnostics`}
+          >
+            <div className="flex items-center justify-between gap-2 text-[10px] font-bold mb-1">
+              <span className="flex items-center gap-1.5 text-slate-300 truncate">
+                <Cloud
+                  className={`w-3.5 h-3.5 shrink-0 transition-colors ${
+                    isSyncInProgress
+                      ? 'text-amber-400 animate-pulse'
+                      : !isOnline
+                      ? 'text-rose-400'
+                      : 'text-emerald-400'
+                  }`}
+                />
+                <span className="truncate">Firestore Sync</span>
+              </span>
+              <span
+                className={`font-mono text-[9px] px-1.5 py-0.5 rounded-full shrink-0 font-extrabold ${
+                  isSyncInProgress
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                    : !isOnline
+                    ? pendingRecordsCount > 0
+                      ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                      : 'bg-slate-800 text-slate-400 border border-slate-700'
+                    : pendingRecordsCount > 0
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                    : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                }`}
+              >
+                {isSyncInProgress
+                  ? `${pendingRecordsCount} Syncing...`
+                  : pendingRecordsCount > 0
+                  ? `${pendingRecordsCount} Queued`
+                  : '0 Pending'}
+              </span>
+            </div>
+
+            {/* Visual Progress Bar Track */}
+            <div className="w-full bg-slate-950 rounded-full h-1.5 overflow-hidden border border-slate-800/80 relative">
+              <div
+                className={`h-full rounded-full transition-all duration-500 ease-out ${
+                  isSyncInProgress
+                    ? 'bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 animate-pulse'
+                    : !isOnline
+                    ? pendingRecordsCount > 0
+                      ? 'bg-gradient-to-r from-rose-500 to-amber-500'
+                      : 'bg-slate-700'
+                    : pendingRecordsCount > 0
+                    ? 'bg-gradient-to-r from-amber-500 to-emerald-500'
+                    : 'bg-emerald-500'
+                }`}
+                style={{ width: `${syncProgressPercent}%` }}
+              />
+              {isSyncInProgress && (
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent -translate-x-full animate-[shimmer_1.5s_infinite]" />
+              )}
+            </div>
+          </motion.div>
 
           {/* Quick Action Badges & RBAC Switcher */}
           <div className="flex items-center gap-2 sm:gap-3">
@@ -477,6 +562,36 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           </div>
         </div>
+      </div>
+
+      {/* Full-Width Visual Progress Bar along Header Bottom Border */}
+      <div
+        className="w-full bg-slate-900/60 h-1 overflow-hidden relative border-t border-slate-800/40"
+        title={`Firestore Background Queue: ${
+          isSyncInProgress
+            ? 'Syncing changes to Firestore...'
+            : pendingRecordsCount > 0
+            ? `${pendingRecordsCount} changes queued in background`
+            : 'Synchronized with Cloud Firestore'
+        }`}
+      >
+        <div
+          className={`h-full transition-all duration-500 ease-out ${
+            isSyncInProgress
+              ? 'bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 animate-pulse'
+              : !isOnline
+              ? pendingRecordsCount > 0
+                ? 'bg-gradient-to-r from-rose-500 to-amber-500'
+                : 'bg-slate-700/60'
+              : pendingRecordsCount > 0
+              ? 'bg-gradient-to-r from-amber-500 to-emerald-500'
+              : 'bg-emerald-500/80'
+          }`}
+          style={{ width: `${syncProgressPercent}%` }}
+        />
+        {isSyncInProgress && (
+          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 to-transparent -translate-x-full animate-[shimmer_1.5s_infinite]" />
+        )}
       </div>
 
       {/* Floating Firestore Diagnostics Modal */}

@@ -263,6 +263,10 @@ export default function App() {
     setThemeState(OfflineDB.getTheme());
   }, []);
 
+  const refreshProductsOnly = useCallback(() => {
+    setProducts(OfflineDB.getProducts());
+  }, []);
+
   // Subscribe to Multi-Tab Broadcast synchronization
   useEffect(() => {
     const unsubscribe = OfflineDB.onSyncUpdate(() => {
@@ -568,8 +572,9 @@ export default function App() {
           {activeTab === 'inventory' && (
             <InventoryModule
               products={products}
+              sales={sales}
               currentUser={currentUser}
-              onRefreshProducts={reloadData}
+              onRefreshProducts={refreshProductsOnly}
             />
           )}
 

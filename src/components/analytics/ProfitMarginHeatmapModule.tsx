@@ -13,6 +13,8 @@ import {
   Filter,
   Download,
   FileText,
+  Calendar,
+  Activity,
 } from 'lucide-react';
 import { generateProfitReportPDF } from '../../utils/pdfReport';
 import {
@@ -48,6 +50,7 @@ const ProfitMarginHeatmapModuleComponent: React.FC<ProfitMarginHeatmapModuleProp
   // Heatmap Table Pagination
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(15);
+  const [trendMetricView, setTrendMetricView] = useState<'all' | 'salesProfit' | 'marginOnly'>('all');
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
 
   const handleDownloadReport = () => {
@@ -233,6 +236,112 @@ const ProfitMarginHeatmapModuleComponent: React.FC<ProfitMarginHeatmapModuleProp
     return result;
   }, [sales]);
 
+  // 12-Month Sales Trends & Profit Margins Historical Data
+  const last12MonthsTrend = useMemo(() => {
+    const monthsData: {
+      monthKey: string;
+      monthName: string;
+      shortMonth: string;
+      sales: number;
+      cost: number;
+      profit: number;
+      profitMargin: number;
+      invoiceCount: number;
+      unitsSold: number;
+    }[] = [];
+
+    const now = new Date();
+    // Build 12 calendar months: from 11 months ago through current month
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const y = d.getFullYear();
+      const m = d.getMonth();
+      const monthKey = `${y}-${String(m + 1).padStart(2, '0')}`;
+      const monthName = d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+      const shortMonth = `${d.toLocaleDateString('en-US', { month: 'short' })} '${String(y).slice(2)}`;
+
+      monthsData.push({
+        monthKey,
+        monthName,
+        shortMonth,
+        sales: 0,
+        cost: 0,
+        profit: 0,
+        profitMargin: 0,
+        invoiceCount: 0,
+        unitsSold: 0,
+      });
+    }
+
+    const monthLookup = new Map(monthsData.map((item) => [item.monthKey, item]));
+
+    // Aggregate sales invoices across months
+    for (let i = 0; i < sales.length; i++) {
+      const s = sales[i];
+      if (!s) continue;
+      const sDate = new Date(s.timestamp || s.date);
+      if (isNaN(sDate.getTime())) continue;
+
+      const key = `${sDate.getFullYear()}-${String(sDate.getMonth() + 1).padStart(2, '0')}`;
+      const entry = monthLookup.get(key);
+      if (entry) {
+        const netTotal = s.netTotal || 0;
+        let invoiceCost = 0;
+        let invoiceUnits = 0;
+
+        if (s.items && Array.isArray(s.items)) {
+          for (let j = 0; j < s.items.length; j++) {
+            const item = s.items[j];
+            if (item) {
+              const qty = item.quantity || 1;
+              const unitCost = item.product?.costPrice || 0;
+              invoiceCost += unitCost * qty;
+              invoiceUnits += qty;
+            }
+          }
+        }
+
+        entry.sales += netTotal;
+        entry.cost += invoiceCost;
+        entry.invoiceCount += 1;
+        entry.unitsSold += invoiceUnits;
+      }
+    }
+
+    // Compute net profit and profit margin percentage
+    for (let i = 0; i < monthsData.length; i++) {
+      const item = monthsData[i];
+      item.profit = Math.max(0, item.sales - item.cost);
+      item.profitMargin = item.sales > 0 ? Math.round((item.profit / item.sales) * 100) : 0;
+    }
+
+    return monthsData;
+  }, [sales]);
+
+  // Aggregate stats across the 12 months for KPI summary
+  const twelveMonthMetrics = useMemo(() => {
+    const totalSales = last12MonthsTrend.reduce((acc, m) => acc + m.sales, 0);
+    const totalProfit = last12MonthsTrend.reduce((acc, m) => acc + m.profit, 0);
+    const totalInvoices = last12MonthsTrend.reduce((acc, m) => acc + m.invoiceCount, 0);
+    const weightedMargin = totalSales > 0 ? Math.round((totalProfit / totalSales) * 100) : 0;
+
+    let bestMonth = last12MonthsTrend[0];
+    for (let i = 1; i < last12MonthsTrend.length; i++) {
+      if (last12MonthsTrend[i].sales > (bestMonth?.sales || 0)) {
+        bestMonth = last12MonthsTrend[i];
+      }
+    }
+
+    return {
+      totalSales,
+      totalProfit,
+      totalInvoices,
+      weightedMargin,
+      bestMonthName: bestMonth?.monthName || 'N/A',
+      bestMonthSales: bestMonth?.sales || 0,
+    };
+  }, [last12MonthsTrend]);
+
   return (
     <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 space-y-6 bg-slate-900">
       {/* Title & Overview */}
@@ -395,6 +504,202 @@ const ProfitMarginHeatmapModuleComponent: React.FC<ProfitMarginHeatmapModuleProp
               <span className="font-bold">{analyticsSummary.lossCount} items</span>
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* 12-Month Historical Sales Trends & Profit Margin Line Chart */}
+      <div className="p-6 rounded-2xl bg-slate-950/80 border border-slate-800 shadow-xl space-y-5">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-xl bg-amber-500/10 text-amber-400 ring-1 ring-amber-400/20">
+                <Calendar className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white flex items-center gap-2">
+                  12-Month Sales Trends & Profit Margins
+                  <span className="text-[11px] font-semibold text-amber-400 bg-amber-500/10 px-2.5 py-0.5 rounded-full border border-amber-500/20">
+                    Last 12 Months
+                  </span>
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Monthly gross sales revenue and profit margin percentage trajectory across the past year
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Metric View Controls */}
+          <div className="flex items-center gap-1.5 self-start lg:self-auto bg-slate-900 p-1 rounded-xl border border-slate-800 text-xs">
+            <button
+              type="button"
+              onClick={() => setTrendMetricView('all')}
+              className={`px-3 py-1.5 rounded-lg font-semibold transition cursor-pointer ${
+                trendMetricView === 'all'
+                  ? 'bg-amber-500 text-slate-950 shadow font-bold'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              All Metrics
+            </button>
+            <button
+              type="button"
+              onClick={() => setTrendMetricView('salesProfit')}
+              className={`px-3 py-1.5 rounded-lg font-semibold transition cursor-pointer ${
+                trendMetricView === 'salesProfit'
+                  ? 'bg-amber-500 text-slate-950 shadow font-bold'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              Sales & Profit (Rs)
+            </button>
+            <button
+              type="button"
+              onClick={() => setTrendMetricView('marginOnly')}
+              className={`px-3 py-1.5 rounded-lg font-semibold transition cursor-pointer ${
+                trendMetricView === 'marginOnly'
+                  ? 'bg-sky-500 text-slate-950 shadow font-bold'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              Margin Only (%)
+            </button>
+          </div>
+        </div>
+
+        {/* 12-Month KPI Summary Badges */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
+          <div className="p-3.5 rounded-xl bg-slate-900/70 border border-slate-800/80">
+            <span className="text-[11px] text-slate-400 font-medium">12M Cumulative Sales</span>
+            <div className="text-base sm:text-lg font-black text-amber-400 mt-0.5">
+              Rs {twelveMonthMetrics.totalSales.toLocaleString()}
+            </div>
+            <span className="text-[10px] text-slate-500">{twelveMonthMetrics.totalInvoices} total transactions</span>
+          </div>
+          <div className="p-3.5 rounded-xl bg-slate-900/70 border border-slate-800/80">
+            <span className="text-[11px] text-slate-400 font-medium">12M Cumulative Profit</span>
+            <div className="text-base sm:text-lg font-black text-emerald-400 mt-0.5">
+              Rs {twelveMonthMetrics.totalProfit.toLocaleString()}
+            </div>
+            <span className="text-[10px] text-slate-500">Gross profit after COGS</span>
+          </div>
+          <div className="p-3.5 rounded-xl bg-slate-900/70 border border-slate-800/80">
+            <span className="text-[11px] text-slate-400 font-medium">Annual Average Margin</span>
+            <div className="text-base sm:text-lg font-black text-sky-400 mt-0.5">
+              {twelveMonthMetrics.weightedMargin}%
+            </div>
+            <span className="text-[10px] text-slate-500">Weighted store margin</span>
+          </div>
+          <div className="p-3.5 rounded-xl bg-slate-900/70 border border-slate-800/80">
+            <span className="text-[11px] text-slate-400 font-medium">Peak Sales Month</span>
+            <div className="text-sm sm:text-base font-bold text-white mt-0.5 truncate" title={twelveMonthMetrics.bestMonthName}>
+              {twelveMonthMetrics.bestMonthName}
+            </div>
+            <span className="text-[10px] text-amber-400/80 font-mono">
+              Rs {twelveMonthMetrics.bestMonthSales.toLocaleString()}
+            </span>
+          </div>
+        </div>
+
+        {/* Recharts Dual-Axis Line Chart */}
+        <div className="h-80 w-full pt-2">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart
+              data={last12MonthsTrend}
+              margin={{ top: 15, right: 25, left: 10, bottom: 10 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" opacity={0.8} />
+              <XAxis
+                dataKey="shortMonth"
+                stroke="#64748b"
+                fontSize={11}
+                tickMargin={8}
+              />
+              {(trendMetricView === 'all' || trendMetricView === 'salesProfit') && (
+                <YAxis
+                  yAxisId="left"
+                  stroke="#fbbf24"
+                  fontSize={11}
+                  tickFormatter={(v) => `Rs ${v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v}`}
+                />
+              )}
+              {(trendMetricView === 'all' || trendMetricView === 'marginOnly') && (
+                <YAxis
+                  yAxisId="right"
+                  orientation="right"
+                  stroke="#38bdf8"
+                  fontSize={11}
+                  unit="%"
+                  domain={[0, (dataMax: number) => Math.max(50, Math.ceil(dataMax * 1.25))]}
+                />
+              )}
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: '#0f172a',
+                  borderColor: '#334155',
+                  borderRadius: '12px',
+                  boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.5)',
+                  color: '#fff',
+                  fontSize: '12px',
+                  padding: '12px 14px',
+                }}
+                formatter={(val: any, name: string) => {
+                  if (name === 'Monthly Sales (Rs)') {
+                    return [`Rs ${Number(val).toLocaleString()}`, 'Monthly Sales'];
+                  }
+                  if (name === 'Gross Profit (Rs)') {
+                    return [`Rs ${Number(val).toLocaleString()}`, 'Gross Profit'];
+                  }
+                  if (name === 'Profit Margin (%)') {
+                    return [`${Number(val)}%`, 'Profit Margin'];
+                  }
+                  return [val, name];
+                }}
+                labelFormatter={(_, payload) => {
+                  const item = payload?.[0]?.payload;
+                  return item ? `${item.monthName} (${item.invoiceCount} invoices)` : '';
+                }}
+              />
+              <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '12px' }} />
+              {(trendMetricView === 'all' || trendMetricView === 'salesProfit') && (
+                <Line
+                  yAxisId="left"
+                  type="monotone"
+                  dataKey="sales"
+                  name="Monthly Sales (Rs)"
+                  stroke="#fbbf24"
+                  strokeWidth={3}
+                  dot={{ r: 4, fill: '#fbbf24', strokeWidth: 1, stroke: '#78350f' }}
+                  activeDot={{ r: 7, stroke: '#fbbf24', strokeWidth: 2, fill: '#0f172a' }}
+                />
+              )}
+              {(trendMetricView === 'all' || trendMetricView === 'salesProfit') && (
+                <Line
+                  yAxisId="left"
+                  type="monotone"
+                  dataKey="profit"
+                  name="Gross Profit (Rs)"
+                  stroke="#10b981"
+                  strokeWidth={2.5}
+                  dot={{ r: 3.5, fill: '#10b981', strokeWidth: 1, stroke: '#064e3b' }}
+                  activeDot={{ r: 6, stroke: '#10b981', strokeWidth: 2, fill: '#0f172a' }}
+                />
+              )}
+              {(trendMetricView === 'all' || trendMetricView === 'marginOnly') && (
+                <Line
+                  yAxisId="right"
+                  type="monotone"
+                  dataKey="profitMargin"
+                  name="Profit Margin (%)"
+                  stroke="#38bdf8"
+                  strokeWidth={2.5}
+                  strokeDasharray="4 4"
+                  dot={{ r: 4, fill: '#38bdf8', strokeWidth: 1, stroke: '#0369a1' }}
+                  activeDot={{ r: 6, stroke: '#38bdf8', strokeWidth: 2, fill: '#0f172a' }}
+                />
+              )}
+            </LineChart>
+          </ResponsiveContainer>
         </div>
       </div>
 

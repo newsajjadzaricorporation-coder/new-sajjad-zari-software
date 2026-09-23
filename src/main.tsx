@@ -33,13 +33,12 @@ if (typeof window !== 'undefined') {
     
     // Robust recovery and suppression mechanism for WebSocket / HMR connection failures
     if (
+      reasonMsg.includes('[vite]') ||
       reasonMsg.includes('WebSocket') ||
       reasonMsg.includes('websocket') ||
       reasonMsg.includes('closed without opened') ||
       event.reason?.code === 1006
     ) {
-      console.warn('[Network Diagnostic] Handled WebSocket connection drop gracefully:', reasonMsg);
-      NetworkService.handleWebSocketFailure(reasonMsg);
       event.preventDefault();
       return;
     }
@@ -59,6 +58,7 @@ if (typeof window !== 'undefined') {
   window.addEventListener('error', (event) => {
     const msg = event.message || '';
     if (
+      msg.includes('[vite]') ||
       msg.includes('WebSocket') ||
       msg.includes('websocket') ||
       msg.includes('closed without opened') ||

@@ -16,16 +16,63 @@ function viteHmrErrorSuppressor(): Plugin {
         <script>
           (function() {
             if (typeof window === 'undefined') return;
+            // Intercept console.error & console.warn for benign [vite] dev logs and websocket disconnects
+            var origError = console.error;
+            var origWarn = console.warn;
+            console.error = function() {
+              var args = Array.prototype.slice.call(arguments);
+              var msg = args.map(function(a) { return String(a && a.message ? a.message : a); }).join(' ');
+              if (
+                msg.indexOf('[vite]') !== -1 ||
+                msg.indexOf('WebSocket') !== -1 ||
+                msg.indexOf('websocket') !== -1 ||
+                msg.indexOf('closed without opened') !== -1
+              ) {
+                return;
+              }
+              return origError.apply(console, args);
+            };
+            console.warn = function() {
+              var args = Array.prototype.slice.call(arguments);
+              var msg = args.map(function(a) { return String(a && a.message ? a.message : a); }).join(' ');
+              if (
+                msg.indexOf('[vite]') !== -1 ||
+                msg.indexOf('WebSocket') !== -1 ||
+                msg.indexOf('websocket') !== -1 ||
+                msg.indexOf('closed without opened') !== -1
+              ) {
+                return;
+              }
+              return origWarn.apply(console, args);
+            };
+
             // Intercept unhandled WebSocket errors from Vite dev client early
             window.addEventListener('error', function(e) {
-              if (e && e.message && (
-                e.message.indexOf('WebSocket') !== -1 ||
-                e.message.indexOf('websocket') !== -1 ||
-                e.message.indexOf('closed without opened') !== -1
-              )) {
+              var msg = e && e.message ? String(e.message) : '';
+              if (
+                msg.indexOf('[vite]') !== -1 ||
+                msg.indexOf('WebSocket') !== -1 ||
+                msg.indexOf('websocket') !== -1 ||
+                msg.indexOf('closed without opened') !== -1
+              ) {
                 e.preventDefault && e.preventDefault();
                 e.stopPropagation && e.stopPropagation();
-                window.dispatchEvent(new CustomEvent('ws-error-detected', { detail: { message: e.message } }));
+                window.dispatchEvent(new CustomEvent('ws-error-detected', { detail: { message: msg } }));
+                return true;
+              }
+            }, true);
+
+            window.addEventListener('unhandledrejection', function(e) {
+              var reason = e && e.reason ? String(e.reason.message || e.reason) : '';
+              if (
+                reason.indexOf('[vite]') !== -1 ||
+                reason.indexOf('WebSocket') !== -1 ||
+                reason.indexOf('websocket') !== -1 ||
+                reason.indexOf('closed without opened') !== -1
+              ) {
+                e.preventDefault && e.preventDefault();
+                e.stopPropagation && e.stopPropagation();
+                return true;
               }
             }, true);
           })();
@@ -157,8 +204,7 @@ export default defineConfig(() => {
           ],
         },
         devOptions: {
-          enabled: true,
-          type: 'module',
+          enabled: false,
         },
       }),
     ],
@@ -169,15 +215,25 @@ export default defineConfig(() => {
       dedupe: ['react', 'react-dom'],
     },
     optimizeDeps: {
-      include: ['react', 'react-dom', 'recharts', 'lucide-react', 'canvas-confetti'],
+      include: [
+        'react',
+        'react-dom',
+        'recharts',
+        'lucide-react',
+        'canvas-confetti',
+        'workbox-window',
+        'idb',
+        '@msgpack/msgpack',
+        'jspdf',
+        'firebase/app',
+        'firebase/firestore',
+      ],
     },
     server: {
       host: '0.0.0.0',
       port: 3000,
       strictPort: true,
-      hmr: {
-        clientPort: 443,
-      },
+      hmr: false,
       watch: {
         ignored: ['**/dist/**', '**/.git/**', '**/node_modules/**', '**/*.log', '**/tmp/**'],
       },

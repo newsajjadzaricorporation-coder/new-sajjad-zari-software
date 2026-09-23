@@ -127,6 +127,23 @@ const salesIndexByDateStatus = new Map<string, SaleInvoice[]>();
 // 3. [customerId + date]
 const salesIndexByCustomer = new Map<string, SaleInvoice[]>();
 
+function updateProductIndex(p: Product) {
+  productIndexById.set(p.id, p);
+
+  const skuLower = p.sku ? p.sku.trim().toLowerCase() : '';
+  const barcodeTrim = p.barcode ? p.barcode.trim() : '';
+  const catLower = (p.category || 'uncategorized').trim().toLowerCase();
+
+  if (skuLower) productIndexBySku.set(skuLower, p);
+  if (barcodeTrim) productIndexByBarcode.set(barcodeTrim, p);
+
+  // Populate composite index [productCode + category]
+  if (skuLower) productIndexByCodeCategory.set(`${skuLower}:${catLower}`, p);
+  if (barcodeTrim) productIndexByCodeCategory.set(`${barcodeTrim}:${catLower}`, p);
+  productIndexByCodeCategory.set(`${p.id}:${catLower}`, p);
+  globalInventoryLRUCache.clear();
+}
+
 function rebuildProductIndices(products: Product[]) {
   productIndexById.clear();
   productIndexBySku.clear();
@@ -225,8 +242,14 @@ function setLocalItem<T>(key: string, value: T): void {
   memoryCache.set(key, value);
   try {
     localStorage.setItem(key, JSON.stringify(value));
-    // Asynchronous background MessagePack binary persistence to IndexedDB
-    idbSetKeyVal(key, value).catch(() => {});
+    // Asynchronous background MessagePack binary persistence to IndexedDB (non-blocking)
+    if (typeof setTimeout !== 'undefined') {
+      setTimeout(() => {
+        idbSetKeyVal(key, value).catch(() => {});
+      }, 0);
+    } else {
+      idbSetKeyVal(key, value).catch(() => {});
+    }
   } catch (err) {
     console.error(`Error saving key ${key} to storage:`, err);
   }
@@ -430,7 +453,7 @@ export class OfflineDB {
       });
     }
     setLocalItem(DB_KEYS.PRODUCTS, products);
-    rebuildProductIndices(products);
+    updateProductIndex(product);
 
     if (isUpdate && oldProduct) {
       if (oldProduct.sellingPrice !== product.sellingPrice) {

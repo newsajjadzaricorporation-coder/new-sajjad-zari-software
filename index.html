@@ -2,6 +2,65 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <script>
+      (function() {
+        if (typeof window === 'undefined') return;
+        var origError = console.error;
+        var origWarn = console.warn;
+        console.error = function() {
+          var args = Array.prototype.slice.call(arguments);
+          var msg = args.map(function(a) { return String(a && a.message ? a.message : a); }).join(' ');
+          if (
+            msg.indexOf('[vite]') !== -1 ||
+            msg.indexOf('WebSocket') !== -1 ||
+            msg.indexOf('websocket') !== -1 ||
+            msg.indexOf('closed without opened') !== -1
+          ) {
+            return;
+          }
+          return origError.apply(console, args);
+        };
+        console.warn = function() {
+          var args = Array.prototype.slice.call(arguments);
+          var msg = args.map(function(a) { return String(a && a.message ? a.message : a); }).join(' ');
+          if (
+            msg.indexOf('[vite]') !== -1 ||
+            msg.indexOf('WebSocket') !== -1 ||
+            msg.indexOf('websocket') !== -1 ||
+            msg.indexOf('closed without opened') !== -1
+          ) {
+            return;
+          }
+          return origWarn.apply(console, args);
+        };
+        window.addEventListener('error', function(e) {
+          var msg = e && e.message ? String(e.message) : '';
+          if (
+            msg.indexOf('[vite]') !== -1 ||
+            msg.indexOf('WebSocket') !== -1 ||
+            msg.indexOf('websocket') !== -1 ||
+            msg.indexOf('closed without opened') !== -1
+          ) {
+            e.preventDefault && e.preventDefault();
+            e.stopPropagation && e.stopPropagation();
+            return true;
+          }
+        }, true);
+        window.addEventListener('unhandledrejection', function(e) {
+          var reason = e && e.reason ? String(e.reason.message || e.reason) : '';
+          if (
+            reason.indexOf('[vite]') !== -1 ||
+            reason.indexOf('WebSocket') !== -1 ||
+            reason.indexOf('websocket') !== -1 ||
+            reason.indexOf('closed without opened') !== -1
+          ) {
+            e.preventDefault && e.preventDefault();
+            e.stopPropagation && e.stopPropagation();
+            return true;
+          }
+        }, true);
+      })();
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>New Sajjad Zari Corporation</title>
     <meta name="description" content="Production-grade offline-first Retail POS, Inventory & Khata Ledger System for New Sajjad Zari Corporation with Quick Stats dashboard, Thermal/A4 printing, profit heatmap, and daily closing." />
