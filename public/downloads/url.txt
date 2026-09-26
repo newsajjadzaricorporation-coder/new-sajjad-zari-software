@@ -1,0 +1,9 @@
+# ========================================================
+# NEW SAJJAD ZARI CORPORATION - POS APPLICATION URL CONFIG
+# ========================================================
+# Application URL:
+https://ais-dev-3oxekguhnsu7h6oxyvwguu-401532134839.asia-east1.run.app
+
+# Or if you are running locally on this PC:
+# http://localhost:3000
+

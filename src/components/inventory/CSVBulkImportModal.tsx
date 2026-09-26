@@ -55,8 +55,6 @@ export const CSVBulkImportModal: React.FC<CSVBulkImportModalProps> = React.memo(
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  if (!isOpen) return null;
-
   // Handle File Upload (.csv or .txt)
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -149,6 +147,8 @@ export const CSVBulkImportModal: React.FC<CSVBulkImportModalProps> = React.memo(
     setCommitResult(null);
     setStep('upload');
   };
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">

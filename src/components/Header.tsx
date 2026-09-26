@@ -29,6 +29,7 @@ import {
   Cloud,
   Clock,
   Globe,
+  Monitor,
 } from 'lucide-react';
 import { UserProfile, ShopSettings } from '../types';
 import { usePWAInstall } from '../hooks/usePWAInstall';
@@ -37,6 +38,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { SyncDiagnostics } from './SyncDiagnostics';
 import { NetworkHealthIndicator } from './NetworkHealthIndicator';
 import { OfflineDebuggerModal } from './OfflineDebuggerModal';
+import { DesktopAppDownloadModal } from './DesktopAppDownloadModal';
 
 interface HeaderProps {
   currentUser: UserProfile;
@@ -82,6 +84,7 @@ export const Header: React.FC<HeaderProps> = ({
   const [showOfflineDebugger, setShowOfflineDebugger] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [isManualReSyncing, setIsManualReSyncing] = useState(false);
+  const [showDesktopDownloadModal, setShowDesktopDownloadModal] = useState(false);
 
   const handleManualReSync = async () => {
     setIsManualReSyncing(true);
@@ -297,6 +300,17 @@ export const Header: React.FC<HeaderProps> = ({
             >
               <Globe className="w-3.5 h-3.5 text-amber-400" />
               <span className="tracking-wide">{language === 'en' ? 'اردو' : 'English'}</span>
+            </button>
+
+            {/* Windows Desktop .exe App Button */}
+            <button
+              type="button"
+              onClick={() => setShowDesktopDownloadModal(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-lg text-xs font-bold transition shadow-sm cursor-pointer"
+              title="Download Windows Desktop Executable (.exe) that connects online"
+            >
+              <Monitor className="w-3.5 h-3.5 text-amber-400" />
+              <span className="hidden sm:inline">Windows .exe</span>
             </button>
 
             {/* PWA Install Button */}
@@ -604,6 +618,12 @@ export const Header: React.FC<HeaderProps> = ({
       <OfflineDebuggerModal
         isOpen={showOfflineDebugger}
         onClose={() => setShowOfflineDebugger(false)}
+      />
+
+      {/* Windows Desktop .exe Download & Instructions Modal */}
+      <DesktopAppDownloadModal
+        isOpen={showDesktopDownloadModal}
+        onClose={() => setShowDesktopDownloadModal(false)}
       />
     </header>
   );

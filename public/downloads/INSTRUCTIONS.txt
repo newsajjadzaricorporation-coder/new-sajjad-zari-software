@@ -1,0 +1,38 @@
+=======================================================
+NEW SAJJAD ZARI CORPORATION - WINDOWS DESKTOP APP (.EXE)
+=======================================================
+
+This Windows Executable (.exe) runs your POS and Inventory
+Management System directly in a dedicated desktop window!
+
+WHY DID "403 FORBIDDEN" APPEAR PREVIOUSLY?
+-----------------------------------------
+Google AI Studio development URLs start with "ais-dev-...".
+These links are private development containers that require Google
+Developer account authentication. When an external app or .exe tries
+to open an "ais-dev-..." URL, Google blocks it with:
+"403. That’s an error. We're sorry, but you do not have access to this page."
+
+HOW TO RUN THE APP AS A DESKTOP SOFTWARE:
+----------------------------------------
+
+METHOD 1: 1-CLICK DESKTOP APP (EASIEST & RECOMMENDED - NO 403 ERROR!)
+1. Open the app in your browser (Google Chrome or Microsoft Edge).
+2. Click the "Install App" button in the app's top bar, or click the
+   install icon in the browser address bar.
+3. Click "Install".
+4. The app is instantly installed to your Windows Desktop and Start Menu!
+   It runs offline, supports thermal receipt printing, and will never show
+   the 403 error.
+
+METHOD 2: RUNNING SajjadZariPOS.exe
+1. In Google AI Studio, click the "Share" button at the top to publish your app.
+2. Your public URL is:
+   https://ais-dev-3oxekguhnsu7h6oxyvwguu-401532134839.asia-east1.run.app
+3. Double-click "SajjadZariPOS.exe" to launch.
+4. To change the URL at any time:
+   Open "url.txt" in Notepad, paste your URL, and save!
+   (Tip: You can also hold down SHIFT while starting SajjadZariPOS.exe
+   to open url.txt in Notepad).
+
+=======================================================

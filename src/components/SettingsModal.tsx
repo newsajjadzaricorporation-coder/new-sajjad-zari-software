@@ -20,6 +20,10 @@ import {
   UploadCloud,
   Image as ImageIcon,
   Check,
+  Monitor,
+  Download,
+  Wifi,
+  Archive,
 } from 'lucide-react';
 import { ShopSettings, UserProfile } from '../types';
 import { OfflineDB } from '../services/db';
@@ -53,7 +57,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     autoLockMinutes: initialSettings.autoLockMinutes ?? 5,
   });
   const [savedSuccess, setSavedSuccess] = useState(false);
-  const [activeSection, setActiveSection] = useState<'general' | 'print' | 'sales' | 'loyalty' | 'security'>('general');
+  const [activeSection, setActiveSection] = useState<'general' | 'print' | 'sales' | 'loyalty' | 'security' | 'desktop'>('general');
   const [testPrintStatus, setTestPrintStatus] = useState<{ isTesting: boolean; message: string | null; success?: boolean }>({
     isTesting: false,
     message: null,
@@ -183,6 +187,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           >
             <Coins className="w-3.5 h-3.5" />
             Loyalty Rewards
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveSection('desktop')}
+            className={`px-3.5 py-2.5 text-xs font-semibold rounded-t-lg transition border-b-2 flex items-center gap-2 whitespace-nowrap ${
+              activeSection === 'desktop'
+                ? 'border-amber-400 text-amber-400 bg-slate-850'
+                : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+            }`}
+          >
+            <Monitor className="w-3.5 h-3.5" />
+            Windows App (.exe)
           </button>
         </div>
 
@@ -829,6 +845,88 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   />
                   <p className="text-[10px] text-slate-400 mt-1">Threshold before points unlock</p>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* Desktop App (.exe) Section */}
+          {activeSection === 'desktop' && (
+            <div className="space-y-4">
+              <div className="p-4 bg-slate-800/80 rounded-xl border border-slate-700/80 flex items-start justify-between gap-4">
+                <div className="flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 shrink-0">
+                    <Monitor className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h4 className="text-sm font-bold text-white">
+                        Windows Native Executable (.exe)
+                      </h4>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-bold flex items-center gap-1">
+                        <Wifi className="w-2.5 h-2.5" />
+                        100% Online Sync
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-300 mt-1">
+                      Download <strong className="text-white">SajjadZariPOS.exe</strong> to run the system in a standalone desktop window on your Windows PC. It connects directly to your live online database with real-time multi-device sync.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                <a
+                  href="/api/download/exe"
+                  download="SajjadZariPOS.exe"
+                  className="flex items-center justify-between p-4 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 rounded-xl font-bold transition shadow-lg shadow-amber-500/20 group cursor-pointer"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-lg bg-slate-950/20 flex items-center justify-center">
+                      <Download className="w-5 h-5 text-slate-950 group-hover:scale-110 transition-transform" />
+                    </div>
+                    <div>
+                      <div className="text-sm font-black">Download .EXE File</div>
+                      <div className="text-[11px] text-slate-900/80 font-medium">SajjadZariPOS.exe (23 KB)</div>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-extrabold px-2 py-0.5 rounded bg-slate-950/20">
+                    Direct
+                  </span>
+                </a>
+
+                <a
+                  href="/api/download/zip"
+                  download="SajjadZariPOS-Windows.zip"
+                  className="flex items-center justify-between p-4 bg-slate-800 hover:bg-slate-750 border border-slate-700 hover:border-amber-500/40 text-white rounded-xl font-bold transition group cursor-pointer"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-lg bg-slate-700/60 flex items-center justify-center">
+                      <Archive className="w-5 h-5 text-amber-400 group-hover:scale-110 transition-transform" />
+                    </div>
+                    <div>
+                      <div className="text-sm font-semibold">Download ZIP Package</div>
+                      <div className="text-[11px] text-slate-400 font-normal">Exe + url.txt + Instructions</div>
+                    </div>
+                  </div>
+                  <span className="text-[10px] text-slate-300 px-2 py-0.5 rounded bg-slate-700">
+                    ZIP
+                  </span>
+                </a>
+              </div>
+
+              {/* Instructions Callout */}
+              <div className="p-4 bg-slate-950/60 rounded-xl border border-slate-800 space-y-2 text-xs text-slate-300">
+                <div className="font-bold text-white flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                  Quick Instructions:
+                </div>
+                <ol className="list-decimal list-inside space-y-1 text-slate-300">
+                  <li>Download and save <strong className="text-white">SajjadZariPOS.exe</strong> on your computer.</li>
+                  <li>Double click the file to launch the POS in an isolated, borderless app window.</li>
+                  <li>Right click the icon on your taskbar and select <strong className="text-white">&quot;Pin to taskbar&quot;</strong>.</li>
+                  <li>Whenever you push updates to the online system, the desktop app immediately loads the latest version on next startup.</li>
+                </ol>
               </div>
             </div>
           )}

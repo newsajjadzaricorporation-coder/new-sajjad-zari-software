@@ -372,6 +372,25 @@ Return a JSON array of anomalies detected (items with negative stock, suspicious
   }
 });
 
+// Download Windows Desktop .exe and ZIP package
+app.get('/api/download/exe', (req, res) => {
+  const exePath = path.join(process.cwd(), 'public', 'SajjadZariPOS.exe');
+  res.download(exePath, 'SajjadZariPOS.exe', (err) => {
+    if (err && !res.headersSent) {
+      res.status(404).json({ error: 'Desktop executable not found' });
+    }
+  });
+});
+
+app.get('/api/download/zip', (req, res) => {
+  const zipPath = path.join(process.cwd(), 'public', 'SajjadZariPOS-Windows.zip');
+  res.download(zipPath, 'SajjadZariPOS-Windows.zip', (err) => {
+    if (err && !res.headersSent) {
+      res.status(404).json({ error: 'Desktop package not found' });
+    }
+  });
+});
+
 // Start Server with Vite Middleware in Development and Static Serving in Production
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
